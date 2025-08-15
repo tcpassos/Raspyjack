@@ -1721,7 +1721,7 @@ class DisposableMenu:
             [" Other features", "ag"],     # g
             [" Read file",      "ah"],     # h
             [" Payload", "ap"],            # p
-            [" Plugins",        "apl"],    # l (plugins list submenu)
+            [" Plugins",        "al"],     # l
         ),
 
         "ab": tuple(
@@ -1829,7 +1829,7 @@ class DisposableMenu:
         ) or ([" <vide>", lambda: None],)  # si aucun script n'est présent
 
     def _build_plugins_menu(self):
-        """Build dynamic plugins submenu 'apl' with toggle entries and a save+restart option."""
+        """Build dynamic plugins submenu 'al' with toggle entries and a save+restart option."""
         cfg = load_plugins_conf()
         entries = []
         for name in sorted(cfg.keys()):
@@ -1852,7 +1852,7 @@ class DisposableMenu:
             time.sleep(0.5)
             Restart()
         entries.append([" Save & Restart", _save_restart])
-        self.menu["apl"] = tuple(entries) if entries else ( [" <no plugins>", lambda: None], )
+        self.menu["al"] = tuple(entries) if entries else ( [" <no plugins>", lambda: None], )
 
     def __init__(self):
         # cette fois, `default` est déjà instancié → pas d'erreur
