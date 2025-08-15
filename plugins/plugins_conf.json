@@ -1,0 +1,10 @@
+{
+  "example_plugin": {
+    "enabled": true,
+    "priority": 50,
+    "options": {
+      "show_seconds": false,
+      "text_color": "white"
+    }
+  }
+}

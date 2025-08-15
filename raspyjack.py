@@ -18,6 +18,14 @@ from functools import partial
 import time
 import sys
 import requests  # For Discord webhook integration
+from typing import List
+
+# --- Plugin system ---------------------------------------------
+try:
+    from plugins.base import PluginManager
+except Exception as _plug_exc:  # allow running without plugins
+    PluginManager = None
+    print(f"[PLUGIN] Plugin system not available: {_plug_exc}")
 
 # WiFi Integration - Add dual interface support
 try:
@@ -67,6 +75,7 @@ except ImportError as e:
         return False
 _stop_evt = threading.Event()
 screen_lock = threading.Event()
+image_lock = threading.Lock()  # synchronize drawing vs display to avoid flicker
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
@@ -75,24 +84,33 @@ def _stats_loop():
         if screen_lock.is_set():          # ← payload actif → on saute le dessin
             time.sleep(0.5)
             continue
-        draw.line([(0, 4), (128, 4)], fill="#222", width=10)
-        draw.text((0, 0), f"{temp():.0f} °C ", fill="WHITE", font=font)
-        status = ""
-        if subprocess.call(['pgrep', 'nmap'], stdout=subprocess.DEVNULL) == 0:
-            status = "(Scan in progress)"
-        elif is_mitm_running():
-            status = "(MITM & sniff)"
-        elif subprocess.call(['pgrep', 'ettercap'], stdout=subprocess.DEVNULL) == 0:
-            status = "(DNSSpoof)"
-        if is_responder_running():
-            status = "(Responder)"
-        draw.text((30, 0), status, fill="WHITE", font=font)
+        with image_lock:  # ensure we draw a full frame before LCD thread pushes it
+            draw.line([(0, 4), (128, 4)], fill="#222", width=10)
+            draw.text((0, 0), f"{temp():.0f} °C ", fill="WHITE", font=font)
+            status = ""
+            if subprocess.call(['pgrep', 'nmap'], stdout=subprocess.DEVNULL) == 0:
+                status = "(Scan in progress)"
+            elif is_mitm_running():
+                status = "(MITM & sniff)"
+            elif subprocess.call(['pgrep', 'ettercap'], stdout=subprocess.DEVNULL) == 0:
+                status = "(DNSSpoof)"
+            if is_responder_running():
+                status = "(Responder)"
+            draw.text((30, 0), status, fill="WHITE", font=font)
+            # Plugin overlay + tick
+            if '_plugin_manager' in globals() and _plugin_manager is not None:
+                try:
+                    _plugin_manager.dispatch_render_overlay(image, draw)
+                    _plugin_manager.dispatch_tick()
+                except Exception:
+                    pass
         time.sleep(2)
 
 def _display_loop():
     while not _stop_evt.is_set():
         if not screen_lock.is_set():
-            LCD.LCD_ShowImage(image, 0, 0)
+            with image_lock:
+                LCD.LCD_ShowImage(image, 0, 0)
         time.sleep(0.1)
 
 def start_background_loops():
@@ -208,6 +226,11 @@ def getButton():
     while 1:
         for item in PINS:
             if GPIO.input(PINS[item]) == 0:
+                if '_plugin_manager' in globals() and _plugin_manager is not None:
+                    try:
+                        _plugin_manager.dispatch_button(item)
+                    except Exception:
+                        pass
                 return item
         time.sleep(0.01)
 
@@ -218,6 +241,11 @@ def temp() -> float:
 
 def Leave(poweroff: bool = False) -> None:
     _stop_evt.set()
+    if '_plugin_manager' in globals() and _plugin_manager is not None:
+        try:
+            _plugin_manager.unload_all()
+        except Exception:
+            pass
     GPIO.cleanup()
     if poweroff:
         os.system("sync && poweroff")
@@ -1561,6 +1589,11 @@ def exec_payload(filename: str) -> None:
         return                                       # nothing to launch
 
     print(f"[PAYLOAD] ► Starting: {filename}")
+    if '_plugin_manager' in globals() and _plugin_manager is not None:
+        try:
+            _plugin_manager.before_exec_payload(filename)
+        except Exception:
+            pass
     screen_lock.set()                # stop _stats_loop & _display_loop
     LCD.LCD_Clear()                  # give the payload a clean canvas
 
@@ -1592,6 +1625,11 @@ def exec_payload(filename: str) -> None:
         time.sleep(.03)
 
     screen_lock.clear()                            # threads can run again
+    if '_plugin_manager' in globals() and _plugin_manager is not None:
+        try:
+            _plugin_manager.after_exec_payload(filename, True)
+        except Exception:
+            pass
     print("[PAYLOAD] ✔ Menu ready – you can navigate again.")
 
 
@@ -2018,6 +2056,41 @@ PINS = {
 }
 LoadConfig()
 m = DisposableMenu()
+
+### Plugin system bootstrap ###
+_plugin_manager = None
+if 'PluginManager' in globals() and PluginManager is not None:
+    try:
+        plugins_cfg_path = os.path.join(default.install_path, 'plugins', 'plugins_conf.json')
+        # Auto-create a default configuration if missing
+        if not os.path.isfile(plugins_cfg_path):
+            os.makedirs(os.path.dirname(plugins_cfg_path), exist_ok=True)
+            with open(plugins_cfg_path, 'w') as _pcf:
+                json.dump({
+                    "example_plugin": {
+                        "enabled": True,
+                        "priority": 50,
+                        "options": {"show_seconds": False, "text_color": "white"}
+                    }
+                }, _pcf, indent=2)
+        with open(plugins_cfg_path, 'r') as _pcf:
+            _plugins_conf = json.load(_pcf)
+        _plugin_manager = PluginManager()
+        _plugin_context = {
+            'exec_payload': lambda name: exec_payload(name),
+            'get_menu': lambda: m.GetMenuList(),
+            'is_responder_running': is_responder_running,
+            'is_mitm_running': is_mitm_running,
+            'draw_image': lambda: image,
+            'draw_obj': lambda: draw,
+        }
+        if hasattr(_plugin_manager, 'load_from_config'):
+            _plugin_manager.load_from_config(_plugins_conf, _plugin_context)
+        else:  # fallback
+            legacy_list = [k for k, v in _plugins_conf.items() if v.get('enabled')]
+            _plugin_manager.load_all(legacy_list, _plugin_context)
+    except Exception as _pm_exc:
+        print(f"[PLUGIN] Failed to bootstrap: {_pm_exc}")
 
 ### Info ###
 print("I'm running on " + str(temp()).split('.')[0] + " °C.")

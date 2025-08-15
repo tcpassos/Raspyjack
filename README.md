@@ -202,6 +202,76 @@ python3 fast_wifi_switcher.py
 
 ---
 
+## 🧩 Plugin System (Experimental)
+
+RaspyJack ships with a lightweight runtime plugin framework. Plugins can add HUD overlays, react to button presses, run code before/after payload execution, and perform periodic tasks (ticks) without modifying `raspyjack.py`.
+
+### 1. File structure
+Place your module inside `plugins/`, e.g. `plugins/my_plugin.py`.
+
+### 2. Exposing the plugin
+Either:
+* define a subclass of `Plugin` (first subclass found is auto‑instantiated) or
+* create an instance and assign it to a global variable named `plugin`.
+
+### 3. Configuration
+Per‑plugin configuration lives in `plugins/plugins_conf.json` (auto‑created if missing). Example:
+```json
+{
+  "example_plugin": {
+    "enabled": true,
+    "priority": 50,
+    "options": {
+      "show_seconds": false,
+      "text_color": "white"
+    }
+  },
+  "battery_plugin": {
+    "enabled": false,
+    "priority": 40,
+    "options": {"slot": "top_right"}
+  }
+}
+```
+Set `enabled` to `false` to disable without deleting the file. Lower `priority` values render / tick first.
+
+### 4. Available callbacks (all optional)
+```
+on_load(context)                  # after instantiation (store context refs here)
+on_unload()                       # before exit / shutdown
+on_tick(dt)                       # periodic (stats loop interval, dt in seconds)
+on_button(name)                   # any physical button press (e.g. KEY_UP_PIN)
+on_render_overlay(image, draw)    # draw small HUD elements (do minimal work)
+on_before_exec_payload(name)      # just before a payload script runs
+on_after_exec_payload(name, ok)   # right after payload finishes
+```
+
+### 5. Context helpers
+The `context` dict passed to `on_load` currently includes: `exec_payload`, `get_menu`, `is_responder_running`, `is_mitm_running`, `draw_image`, `draw_obj`.
+
+### 6. Minimal example
+```python
+from plugins.base import Plugin
+import time
+
+class Clock(Plugin):
+    name = "Clock"
+    priority = 50
+    def on_load(self, ctx):
+        self.ctx = ctx
+    def on_render_overlay(self, image, draw):
+        draw.text((90, 0), time.strftime('%H:%M'), fill='white')
+
+plugin = Clock()
+```
+
+Add (or enable) the corresponding block in `plugins_conf.json`, then restart RaspyJack.
+
+Disable all plugins by setting every block's `enabled` to `false` (or rename the config file).
+
+
+---
+
 ## 🎨  View Modes
 
 RaspyJack features **three different view modes** to navigate the main menu! Press **KEY1** to cycle through them:
