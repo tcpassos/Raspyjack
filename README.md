@@ -229,7 +229,6 @@ Per‑plugin configuration lives in `plugins/plugins_conf.json` (auto‑created 
   "battery_plugin": {
     "enabled": false,
     "priority": 40,
-    "options": {"slot": "top_right"}
   }
 }
 ```
