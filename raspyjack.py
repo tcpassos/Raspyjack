@@ -334,6 +334,53 @@ def LoadConfig():
             GPIO.setup(PINS[item], GPIO.IN, pull_up_down=GPIO.PUD_UP)
     print("Config loaded!")
 
+# ---------------- Plugin enable/disable menu -----------------------------
+def _plugins_config_path():
+    return os.path.join(default.install_path, 'plugins', 'plugins_conf.json')
+
+def load_plugins_conf():
+    try:
+        with open(_plugins_config_path(), 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_plugins_conf(cfg: dict):
+    try:
+        os.makedirs(os.path.dirname(_plugins_config_path()), exist_ok=True)
+        with open(_plugins_config_path(), 'w') as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print(f"[PLUGIN] Failed saving plugins_conf: {e}")
+
+def reload_plugins():
+    global _plugin_manager
+    if 'PluginManager' not in globals() or PluginManager is None:
+        return
+    cfg = load_plugins_conf()
+    if _plugin_manager is None:
+        _plugin_manager = PluginManager()
+    else:
+        try:
+            _plugin_manager.unload_all()
+        except Exception:
+            pass
+    ctx = {
+        'exec_payload': lambda name: exec_payload(name),
+        'get_menu': lambda: m.GetMenuList(),
+        'is_responder_running': is_responder_running,
+        'is_mitm_running': is_mitm_running,
+        'draw_image': lambda: image,
+        'draw_obj': lambda: draw,
+    }
+    if hasattr(_plugin_manager, 'load_from_config'):
+        _plugin_manager.load_from_config(cfg, ctx)
+    else:
+        names = [k for k, v in cfg.items() if isinstance(v, dict) and v.get('enabled')]
+        _plugin_manager.load_all(names, ctx)
+
+## (Removed open_plugins_menu in favor of submenu implementation) ##
+
 ####### Drawing functions #######
 
 ### Simple message box ###
@@ -449,7 +496,13 @@ def GetMenuString(inlist, duplicates=False):
         inlist = [f"{i}#{txt}" for i, txt in enumerate(inlist)]
 
     total   = len(inlist)           # nb total d'items
-    index   = 0                     # position réelle du curseur (0-based)
+    # Persist selection index per menu (so plugin submenu keeps its position)
+    global _menu_indices
+    try:
+        _menu_indices
+    except NameError:
+        _menu_indices = {}
+    index   = _menu_indices.get(m.which, 0) if m.which else 0  # current index (0-based)
     offset  = 0                     # index du 1er item visible (0-based)
 
     while True:
@@ -461,6 +514,9 @@ def GetMenuString(inlist, duplicates=False):
 
         # -- 2/ Compose la fenêtre à afficher (pas de wrap visuel) ----------
         window = inlist[offset:offset + WINDOW]
+
+        # Save current index for this menu so reopening keeps position
+        _menu_indices[m.which] = index
 
         # -- 3/ Rendu --------------------------------------------------------
         color.DrawMenuBackground()
@@ -1665,6 +1721,7 @@ class DisposableMenu:
             [" Other features", "ag"],     # g
             [" Read file",      "ah"],     # h
             [" Payload", "ap"],            # p
+            [" Plugins",        "apl"],    # l (plugins list submenu)
         ),
 
         "ab": tuple(
@@ -1771,9 +1828,36 @@ class DisposableMenu:
             for script in list_payloads()
         ) or ([" <vide>", lambda: None],)  # si aucun script n'est présent
 
+    def _build_plugins_menu(self):
+        """Build dynamic plugins submenu 'apl' with toggle entries and a save+restart option."""
+        cfg = load_plugins_conf()
+        entries = []
+        for name in sorted(cfg.keys()):
+            enabled = bool(cfg[name].get('enabled'))
+            label = f" [{'x' if enabled else ' '}] {name}"
+            # closure to toggle specific plugin
+            def _make_toggle(pname):
+                def _toggle():
+                    c = load_plugins_conf()
+                    if pname in c:
+                        c[pname]['enabled'] = not bool(c[pname].get('enabled'))
+                        save_plugins_conf(c)
+                    # Rebuild to reflect new state (no restart yet)
+                    self._build_plugins_menu()
+                return _toggle
+            entries.append([label, _make_toggle(name)])
+        # Save & Restart item
+        def _save_restart():
+            Dialog_info(" Restarting UI\n  for plugins", wait=True)
+            time.sleep(0.5)
+            Restart()
+        entries.append([" Save & Restart", _save_restart])
+        self.menu["apl"] = tuple(entries) if entries else ( [" <no plugins>", lambda: None], )
+
     def __init__(self):
         # cette fois, `default` est déjà instancié → pas d'erreur
         self._build_payload_menu()
+        self._build_plugins_menu()
 
 
 ### Font Awesome Icon Mapping ###
@@ -1788,6 +1872,7 @@ MENU_ICONS = {
     " Other features": "\uf085",   # cogs
     " Read file": "\uf15c",        # file-alt
     " Payload": "\uf121",          # code/terminal icon
+    " Plugins": "\uf12e",          # puzzle-piece icon
 }
 
 ### Menu Descriptions for Carousel View ###
@@ -1802,6 +1887,7 @@ MENU_DESCRIPTIONS = {
     " Other features": "Additional tools\nand system\nconfiguration",
     " Read file": "View captured\ndata and scan\nresults",
     " Payload": "Execute custom\nPython scripts\nand tools",
+    " Plugins": "Enable/disable\nUI overlay\nplugins",
 }
 
 

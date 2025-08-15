@@ -1,6 +1,6 @@
 {
   "example_plugin": {
-    "enabled": true,
+    "enabled": false,
     "priority": 50,
     "options": {
       "show_seconds": false,
@@ -8,7 +8,7 @@
     }
   },
   "battery_status_plugin": {
-    "enabled": true,
+    "enabled": false,
     "priority": 40
   }
 }
