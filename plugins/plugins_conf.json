@@ -6,5 +6,9 @@
       "show_seconds": false,
       "text_color": "white"
     }
+  },
+  "battery_status_plugin": {
+    "enabled": true,
+    "priority": 40
   }
 }

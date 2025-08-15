@@ -55,13 +55,11 @@ class ExamplePlugin(Plugin):
             self.current_time_str = time.strftime(fmt)
 
     def on_render_overlay(self, image, draw) -> None:
-        # Draw a tiny time widget (clear only its own zone)
         w, h = image.size
-        # reserve a 36x12 area near top right just under the status line
-        x2 = w - 2
-        x1 = x2 - 45
-        y1 = 0
-        draw.text((x1 + 1, y1), self.current_time_str, fill=self.text_color)
+        center_x = w // 2
+        text_x = center_x - 30
+        # Draw a tiny time widget
+        draw.text((text_x, 0), self.current_time_str, fill=self.text_color)
 
 
 plugin = ExamplePlugin()
