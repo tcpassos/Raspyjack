@@ -75,7 +75,6 @@ except ImportError as e:
         return False
 _stop_evt = threading.Event()
 screen_lock = threading.Event()
-image_lock = threading.Lock()  # synchronize drawing vs display to avoid flicker
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
@@ -84,33 +83,33 @@ def _stats_loop():
         if screen_lock.is_set():          # ← payload actif → on saute le dessin
             time.sleep(0.5)
             continue
-        with image_lock:  # ensure we draw a full frame before LCD thread pushes it
-            draw.line([(0, 4), (128, 4)], fill="#222", width=10)
-            draw.text((0, 0), f"{temp():.0f} °C ", fill="WHITE", font=font)
-            status = ""
-            if subprocess.call(['pgrep', 'nmap'], stdout=subprocess.DEVNULL) == 0:
-                status = "(Scan in progress)"
-            elif is_mitm_running():
-                status = "(MITM & sniff)"
-            elif subprocess.call(['pgrep', 'ettercap'], stdout=subprocess.DEVNULL) == 0:
-                status = "(DNSSpoof)"
-            if is_responder_running():
-                status = "(Responder)"
-            draw.text((30, 0), status, fill="WHITE", font=font)
-            # Plugin overlay + tick
-            if '_plugin_manager' in globals() and _plugin_manager is not None:
-                try:
-                    _plugin_manager.dispatch_render_overlay(image, draw)
-                    _plugin_manager.dispatch_tick()
-                except Exception:
-                    pass
+        # Update only the static status bar (base layer)
+        draw.line([(0, 4), (128, 4)], fill="#222", width=10)
+        draw.text((0, 0), f"{temp():.0f} °C ", fill="WHITE", font=font)
+        status = ""
+        if subprocess.call(['pgrep', 'nmap'], stdout=subprocess.DEVNULL) == 0:
+            status = "(Scan in progress)"
+        elif is_mitm_running():
+            status = "(MITM & sniff)"
+        elif subprocess.call(['pgrep', 'ettercap'], stdout=subprocess.DEVNULL) == 0:
+            status = "(DNSSpoof)"
+        if is_responder_running():
+            status = "(Responder)"
+        draw.text((30, 0), status, fill="WHITE", font=font)
         time.sleep(2)
 
 def _display_loop():
     while not _stop_evt.is_set():
         if not screen_lock.is_set():
-            with image_lock:
-                LCD.LCD_ShowImage(image, 0, 0)
+            # Double buffering: copy base image, render overlays, then push
+            frame = image.copy()
+            if '_plugin_manager' in globals() and _plugin_manager is not None:
+                try:
+                    _plugin_manager.dispatch_tick()  # frequent ticks (~10 Hz)
+                    _plugin_manager.dispatch_render_overlay(frame, ImageDraw.Draw(frame))
+                except Exception:
+                    pass
+            LCD.LCD_ShowImage(frame, 0, 0)
         time.sleep(0.1)
 
 def start_background_loops():
@@ -224,14 +223,27 @@ class template():
 ### Get any button press ###
 def getButton():
     while 1:
-        for item in PINS:
-            if GPIO.input(PINS[item]) == 0:
-                if '_plugin_manager' in globals() and _plugin_manager is not None:
-                    try:
-                        _plugin_manager.dispatch_button(item)
-                    except Exception:
-                        pass
-                return item
+        for item, pin in PINS.items():
+            val = GPIO.input(pin)
+            if item in EDGE_BUTTONS:
+                prev = _button_prev.get(item, 1)
+                if prev == 1 and val == 0:  # rising edge (released -> pressed)
+                    _button_prev[item] = val
+                    if '_plugin_manager' in globals() and _plugin_manager is not None:
+                        try:
+                            _plugin_manager.dispatch_button(item)
+                        except Exception:
+                            pass
+                    return item
+                _button_prev[item] = val
+            else:
+                if val == 0:
+                    if '_plugin_manager' in globals() and _plugin_manager is not None:
+                        try:
+                            _plugin_manager.dispatch_button(item)
+                        except Exception:
+                            pass
+                    return item
         time.sleep(0.01)
 
 def temp() -> float:
@@ -2054,8 +2066,26 @@ PINS = {
     "KEY2_PIN": 20,
     "KEY3_PIN": 16
 }
+# edge-triggered set
+EDGE_BUTTONS = {
+    "KEY1_PIN",
+    "KEY2_PIN",
+    "KEY3_PIN",
+    "KEY_LEFT_PIN",
+    "KEY_RIGHT_PIN",
+    "KEY_PRESS_PIN"
+} 
+_button_prev = {}
 LoadConfig()
 m = DisposableMenu()
+
+# Initialize previous states for edge-detected buttons
+for _bn, _pin in PINS.items():
+    if _bn in EDGE_BUTTONS:
+        try:
+            _button_prev[_bn] = GPIO.input(_pin)
+        except Exception:
+            _button_prev[_bn] = 1  # assume released
 
 ### Plugin system bootstrap ###
 _plugin_manager = None
