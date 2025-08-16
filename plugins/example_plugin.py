@@ -55,6 +55,12 @@ class ExamplePlugin(Plugin):
             self.current_time_str = time.strftime(fmt)
 
     def on_render_overlay(self, image, draw) -> None:
+        # Skip if status bar already showing a message (avoid clutter)
+        try:
+            if 'status_bar' in getattr(self, 'ctx', {}) and self.ctx['status_bar'].is_busy():
+                return
+        except Exception:
+            pass
         w, h = image.size
         center_x = w // 2
         text_x = center_x - 30

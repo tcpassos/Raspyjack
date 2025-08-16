@@ -5,6 +5,14 @@ Life‑cycle / callback methods (all optional):
     on_load(context: dict) -> None
         Called once right after the plugin is instantiated and registered.
         `context` contains helper callables and shared state references.
+        Currently provided keys (may expand):
+            exec_payload(name)          -> run a payload script
+            get_menu()                  -> current menu list
+            is_responder_running()      -> bool
+            is_mitm_running()           -> bool
+            draw_image()                -> PIL base image (do not mutate globally)
+            draw_obj()                  -> PIL ImageDraw for base image
+            status_bar                  -> StatusBar instance (has set_temp_status, is_busy, etc.)
 
     on_unload() -> None
         Called during shutdown (Leave) so the plugin can release resources.
