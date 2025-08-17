@@ -117,17 +117,20 @@ class StatusBar:
             return self._activity
 
     # ---- Rendering ------------------------------------------------------
-    def render(self, draw_obj, temperature: float, font_obj) -> None:
-        """Render the top status/temperature bar."""
+    def render(self, draw_obj, font_obj) -> None:
+        """Render the top status bar."""
         try:
             # Background band
             draw_obj.rectangle((0, 0, 128, 12), fill="#000000")
-            # Temperature (integer part)
-            draw_obj.text((0, 0), f"{temperature:.0f} °C ", fill="WHITE", font=font_obj)
             # Status (may be empty)
             status_txt = self.get_status_msg()
             if status_txt:
-                draw_obj.text((30, 0), status_txt, fill="WHITE", font=font_obj)
+                # Centered position
+                try:
+                    status_width = font_obj.getbbox(status_txt)[2]
+                except AttributeError:  # Fallback for older PIL
+                    status_width = font_obj.getsize(status_txt)[0]
+                draw_obj.text(((128 - status_width) / 2, 0), status_txt, fill="WHITE", font=font_obj)
         except Exception:
             pass
 
@@ -159,22 +162,15 @@ def _compute_activity_status() -> str:
     return ""
 
 def _stats_update_loop():
-    global _temperature
     """Background thread that updates stats at fixed interval regardless of render FPS."""
     while not _stop_evt.is_set():
         if not screen_lock.is_set():  # pause updates while payload owns screen
-            # Temperature (best effort)
-            try:
-                _temperature = temp()
-            except Exception:
-                _temperature = 0.0  # fallback if temperature read fails
-            # Activity status (independent of temperature errors)
+            # Activity status
             activity = _compute_activity_status()
             status_bar.set_activity(activity)
         time.sleep(2.0)
 
 def _render_loop():
-    global _temperature
     """Update stats (if needed) and render overlays."""
     TICK = 0.1  # ~10 FPS overlay
     while not _stop_evt.is_set():
@@ -185,7 +181,7 @@ def _render_loop():
         frame = image.copy()
         draw_frame = ImageDraw.Draw(frame)
         # Draw status/temperature bar via StatusBar helper
-        status_bar.render(draw_frame, _temperature, font)
+        status_bar.render(draw_frame, font)
 
         # Plugins overlays
         if '_plugin_manager' in globals() and _plugin_manager is not None:
@@ -335,10 +331,6 @@ def getButton():
                             pass
                     return item
         time.sleep(0.01)
-
-def temp() -> float:
-    with open("/sys/class/thermal/thermal_zone0/temp") as f:
-        return int(f.read()) / 1000
 
 
 def Leave(poweroff: bool = False) -> None:
@@ -2299,7 +2291,6 @@ if 'PluginManager' in globals() and PluginManager is not None:
         print(f"[PLUGIN] Failed to bootstrap: {_pm_exc}")
 
 ### Info ###
-print("I'm running on " + str(temp()).split('.')[0] + " °C.")
 print(time.strftime("%H:%M:%S"))
 
 # Delay for logo
