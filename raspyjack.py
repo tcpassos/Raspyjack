@@ -12,6 +12,7 @@ import RPi.GPIO as GPIO
 from functools import partial
 import time
 import sys
+import textwrap
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
@@ -967,9 +968,25 @@ def ShowInfo():
 
 
 def DisplayScrollableInfo(info_lines):
-    """Display scrollable text information - simple and working."""
+    """Display scrollable text information with automatic line wrapping."""
+    # Estimate character width for wrapping.
+    WRAP_WIDTH = 24
+    
+    wrapped_info_lines = []
+    for line in info_lines:
+        # Wrap the line and add the resulting lines to new list
+        wrapped_lines = textwrap.wrap(line, width=WRAP_WIDTH, replace_whitespace=False, drop_whitespace=False)
+        if not wrapped_lines:
+            wrapped_info_lines.append('')
+        else:
+            wrapped_info_lines.extend(wrapped_lines)
+
+    info_lines = wrapped_info_lines
     WINDOW = 7  # lines visible simultaneously
     total = len(info_lines)
+    if total == 0:
+        return
+        
     index = 0   # current position
     offset = 0  # window offset
 
@@ -997,11 +1014,11 @@ def DisplayScrollableInfo(info_lines):
                     fill=color.select
                 )
             
-            # Draw the text - NO TRUNCATION for network info
+            # Draw the text
             draw.text(
                 (default.start_text[0],
                  default.start_text[1] + default.text_gap * i),
-                line,  # Show full text - let it overflow if needed
+                line,
                 font=text_font,
                 fill=fill
             )
@@ -1014,8 +1031,8 @@ def DisplayScrollableInfo(info_lines):
             index = (index + 1) % total  # wrap to beginning
         elif btn == "KEY_UP_PIN":
             index = (index - 1) % total  # wrap to end
-        elif btn in ("KEY_LEFT_PIN", "KEY3_PIN"):
-            return  # Exit on back/left button
+        elif btn in ("KEY_LEFT_PIN", "KEY3_PIN", "KEY_PRESS_PIN"):
+            return  # Exit on back/left/press button
 
 
 def Explorer(path="/",extensions=""):
