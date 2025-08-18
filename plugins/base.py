@@ -70,6 +70,8 @@ class Plugin:
     def on_render_overlay(self, image, draw) -> None: ...
     def on_before_exec_payload(self, payload_name: str) -> None: ...
     def on_after_exec_payload(self, payload_name: str, success: bool) -> None: ...
+    def on_before_scan(self, label: str, args: list[str]) -> None: ...
+    def on_after_scan(self, label: str, args: list[str], result_path: str) -> None: ...
 
 
 @dataclass
@@ -258,6 +260,20 @@ class PluginManager:
                 lp.instance.on_after_exec_payload(payload_name, success)
             except Exception:
                 self._log(f"[PLUGIN] after_exec error in {lp.instance.name}")
+
+    def before_scan(self, label: str, args: list[str]) -> None:
+        for lp in self._loaded:
+            try:
+                lp.instance.on_before_scan(label, args)
+            except Exception:
+                self._log(f"[PLUGIN] before_scan error in {lp.instance.name}")
+
+    def after_scan(self, label: str, args: list[str], result_path: str) -> None:
+        for lp in self._loaded:
+            try:
+                lp.instance.on_after_scan(label, args, result_path)
+            except Exception:
+                self._log(f"[PLUGIN] after_scan error in {lp.instance.name}")
 
     # ------------------------------------------------------------------
     # Utils

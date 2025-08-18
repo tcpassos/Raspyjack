@@ -19,5 +19,9 @@
       "text_color": "white",
       "show_unit": true
     }
+  },
+  "discord_notifier_plugin": {
+    "enabled": true,
+    "priority": 200
   }
 }
