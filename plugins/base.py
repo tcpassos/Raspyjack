@@ -72,6 +72,8 @@ class Plugin:
     def on_after_exec_payload(self, payload_name: str, success: bool) -> None: ...
     def on_before_scan(self, label: str, args: list[str]) -> None: ...
     def on_after_scan(self, label: str, args: list[str], result_path: str) -> None: ...
+    def get_info(self) -> str:
+        return "No information available for this plugin."
 
 
 @dataclass
@@ -274,6 +276,19 @@ class PluginManager:
                 lp.instance.on_after_scan(label, args, result_path)
             except Exception:
                 self._log(f"[PLUGIN] after_scan error in {lp.instance.name}")
+
+    def get_plugin_info(self, name: str) -> str:
+        """Get info string from a specific plugin by name."""
+        for lp in self._loaded:
+            # Compare against the module name, not the class name
+            module_short_name = lp.module.__name__.split('.')[-1]
+            if module_short_name == name:
+                try:
+                    return lp.instance.get_info()
+                except Exception as e:
+                    self._log(f"[PLUGIN] get_info error in {lp.instance.name}: {e}")
+                    return "Error getting info."
+        return "Plugin not loaded."
 
     # ------------------------------------------------------------------
     # Utils

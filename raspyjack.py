@@ -12,7 +12,6 @@ import RPi.GPIO as GPIO
 from functools import partial
 import time
 import sys
-import requests  # For Discord webhook integration
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
@@ -462,8 +461,6 @@ def reload_plugins():
         names = [k for k, v in cfg.items() if isinstance(v, dict) and v.get('enabled')]
         _plugin_manager.load_all(names, ctx)
 
-## (Removed open_plugins_menu in favor of submenu implementation) ##
-
 ####### Drawing functions #######
 
 ### Simple message box ###
@@ -680,6 +677,17 @@ def GetMenuString(inlist, duplicates=False):
             # Toggle to grid view (only on main menu)
             toggle_view_mode()
             return (-1, "") if duplicates else ""
+        elif btn == "KEY2_PIN":
+            if m.which == "al":  # Plugin menu
+                if index < total:
+                    selected_item = inlist[index]
+                    # Extract plugin name from " [x] plugin_name"
+                    if ']' in selected_item:
+                        plugin_name = selected_item.split('] ')[-1]
+                        if _plugin_manager:
+                            # Get info and display it in a scrollable view
+                            info = _plugin_manager.get_plugin_info(plugin_name)
+                            DisplayScrollableInfo(info.split('\n'))
         elif btn == "KEY_LEFT_PIN":
             return (-1, "") if duplicates else ""
 
@@ -937,19 +945,6 @@ def ShowInfo():
                         ])
                 except:
                     pass
-            
-            # Add Discord webhook status
-            webhook_url = get_discord_webhook()
-            if webhook_url:
-                info_lines.extend([
-                    "Discord:",
-                    "  ✅ Webhook configured"
-                ])
-            else:
-                info_lines.extend([
-                    "Discord:",
-                    "  ❌ No webhook"
-                ])
         else:
             # Not connected
             info_lines = [

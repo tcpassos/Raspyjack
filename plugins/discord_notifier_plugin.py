@@ -98,4 +98,11 @@ class DiscordNotifierPlugin(Plugin):
         )
         thread.start()
 
+    def get_info(self) -> str:
+        """Check if the Discord webhook is configured."""
+        if get_discord_webhook_url():
+            return "Discord webhook is configured."
+        else:
+            return "Discord webhook is NOT configured. See discord_webhook.txt."
+
 plugin = DiscordNotifierPlugin()
