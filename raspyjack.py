@@ -71,7 +71,6 @@ except ImportError as e:
         return False
 _stop_evt = threading.Event()
 screen_lock = threading.Event()
-_temperature: float = 0.0
 
 class StatusBar:
     """Activity and temporary status management"""
