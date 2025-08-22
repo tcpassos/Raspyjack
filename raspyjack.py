@@ -559,13 +559,13 @@ def ShowLines(arr,bold=[]):
 
 def GetMenuString(inlist, duplicates=False):
     """
-    Affiche une liste déroulante de taille variable dans une fenêtre de 8 lignes.
-    - Défilement fluide (on fait glisser la fenêtre d'un item à la fois).
-    - Navigation circulaire.
-    - Si duplicates=True : retourne (index, valeur) ; sinon retourne valeur.
-    - Si la liste est vide : affiche un placeholder et retourne "".
+    Display a variable-size dropdown list in an 8-line window.
+    - Smooth scrolling (one item at a time).
+    - Circular navigation.
+    - If duplicates=True : returns (index, value) ; otherwise returns value.
+    - If the list is empty : displays a placeholder and returns "".
     """
-    WINDOW      = 7                 # lignes visibles simultanément
+    WINDOW      = 7                 # lines visible simultaneously
     CURSOR_MARK = m.char            # '> '
     empty       = False
 
@@ -1627,16 +1627,25 @@ def quick_wifi_toggle():
 
 def list_payloads():
     """
-    Returns the list of .py scripts in payload_path, sorted by file name.
+    Returns a sorted list of available payloads.
+    This includes .py scripts and directories containing a payload.sh file.
     """
-    try:
-        return sorted(
-            f for f in os.listdir(default.payload_path)
-            if f.endswith(".py") and not f.startswith("_")
-        )
-    except FileNotFoundError:
-        os.makedirs(default.payload_path, exist_ok=True)
+    payloads = []
+    path = default.payload_path
+    if not os.path.isdir(path):
+        os.makedirs(path, exist_ok=True)
         return []
+
+    for fname in os.listdir(path):
+        full_path = os.path.join(path, fname)
+        # Python payload script
+        if fname.endswith(".py") and not fname.startswith("_") and os.path.isfile(full_path):
+            payloads.append(fname)
+        # Directory-based shell payload (must contain payload.sh)
+        elif os.path.isdir(full_path) and 'payload.sh' in os.listdir(full_path):
+            payloads.append(fname)
+            
+    return sorted(payloads)
 
 # ---------------------------------------------------------------------------
 # 1)  Helper – reset GPIO *and* re-initialise the LCD
@@ -1665,19 +1674,29 @@ def _setup_gpio() -> None:
 # ---------------------------------------------------------------------------
 def exec_payload(filename: str) -> None:
     """
-    Execute a Python script located in « payloads/ » and *always*
-    return control – screen **and** buttons – to RaspyJack.
+    Execute a Python script or a shell payload directory located in « payloads/ »
+    and *always* return control – screen **and** buttons – to RaspyJack.
 
     Workflow
     --------
     1. Freeze the UI (stop background threads, black screen).
     2. Run the payload **blocking** in the foreground.
+       - For .py files: executed directly with the Python interpreter.
+       - For directories: `payload_executor.py` is called with the path to `payload.sh`.
     3. Whatever happens, re-initialise GPIO + LCD and redraw the menu.
     """
-    full = os.path.join(default.payload_path, filename)
-    if not os.path.isfile(full):
-        print(f"[PAYLOAD] ✗ File not found: {full}")
-        return                                       # nothing to launch
+    is_py_payload = filename.endswith('.py')
+    is_dir_payload = not is_py_payload
+
+    full_path = os.path.join(default.payload_path, filename)
+
+    # --- Validate payload existence ---
+    if is_py_payload and not os.path.isfile(full_path):
+        Dialog_info(f"Payload script not found:\n{filename}", wait=True)
+        return
+    elif is_dir_payload and not (os.path.isdir(full_path) and 'payload.sh' in os.listdir(full_path)):
+        Dialog_info(f"Payload directory not found\nor missing payload.sh:\n{filename}", wait=True)
+        return
 
     print(f"[PAYLOAD] ► Starting: {filename}")
     if '_plugin_manager' in globals() and _plugin_manager is not None:
@@ -1690,15 +1709,36 @@ def exec_payload(filename: str) -> None:
 
     log = open(default.payload_log, "ab", buffering=0)
     try:
-        subprocess.run(
-            ["python3", full],
-            cwd=default.install_path,  # same PYTHONPATH as RaspyJack
-            stdout=log,
+        command = []
+        if is_py_payload:
+            # Execute Python payload directly
+            command = [sys.executable, "-u", full_path]
+        else:
+            # For directory payloads, use the orchestrator
+            executor_script = os.path.join(default.payload_path, "payload_executor.py")
+            shell_script_path = os.path.join(full_path, "payload.sh")
+            command = [sys.executable, "-u", executor_script, shell_script_path]
+
+        proc = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            cwd=default.install_path,
+            text=True,
+            bufsize=1
         )
-        print("[PAYLOAD]   • Finished without error.")
+
+        # Stream output to both service log (print) and payload log file
+        if proc.stdout:
+            for line in iter(proc.stdout.readline, ''):
+                print(line, end='')  # Print to RaspyJack's main log
+                log.write(line.encode('utf-8'))  # Write to payload.log
+
+        proc.wait()
     except Exception as exc:
-        print(f"[PAYLOAD]   • ERROR: {exc!r}")
+        print(f"[PAYLOAD] E: {exc}")
+    finally:
+        log.close()
 
     # ---- restore RaspyJack ----------------------------------------------
     print("[PAYLOAD] ◄ Restoring LCD & GPIO…")
@@ -1845,19 +1885,23 @@ class DisposableMenu:
         return -1
     # Génération à chaud du sous-menu Payload -------------------------------
     def _build_payload_menu(self):
-        """Crée (ou rafraîchit) le menu 'ap' en fonction du contenu du dossier."""
-        self.menu["ap"] = tuple(
-            [f" {script[:-3]}", partial(exec_payload, script)]
-            for script in list_payloads()
-        ) or ([" <vide>", lambda: None],)  # si aucun script n'est présent
+        """Create (or refresh) the 'ap' payload submenu from the filesystem contents."""
+
+        def _label_for(entry: str) -> str:
+            # If it's a .py script remove only the extension; keep directory names as-is
+            name, ext = os.path.splitext(entry)
+            return name if ext == '.py' else entry
+        payload_entries = []
+        for script in list_payloads():
+            label = _label_for(script)
+            payload_entries.append([f" {label}", partial(exec_payload, script)])
+        self.menu["ap"] = tuple(payload_entries) or ([" <empty>", lambda: None],)
 
     def _build_plugins_menu(self):
-        """Build dynamic plugins submenu 'al' with toggle entries and a save+restart option."""
+        """Build dynamic plugins submenu 'al' with toggle entries plus a save+restart option."""
         cfg = load_plugins_conf()
         entries = []
         for name in sorted(cfg.keys()):
-            enabled = bool(cfg[name].get('enabled'))
-            label = f" [{'x' if enabled else ' '}] {name}"
             # closure to toggle specific plugin
             def _make_toggle(pname):
                 def _toggle():
@@ -1868,7 +1912,7 @@ class DisposableMenu:
                     # Rebuild to reflect new state (no restart yet)
                     self._build_plugins_menu()
                 return _toggle
-            entries.append([label, _make_toggle(name)])
+            entries.append([f" [{'x' if cfg[name].get('enabled') else ' '}] {name}", _make_toggle(name)])
         # Save & Restart item
         def _save_restart():
             Dialog_info(" Restarting UI\n  for plugins", wait=True)

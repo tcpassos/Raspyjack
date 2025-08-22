@@ -383,6 +383,11 @@ raspyjack/
 │   ├── deauth.py
 │   ├── fast_wifi_switcher.py
 │   └── wifi_manager_payload.py
+|
+├── plugins/
+│   ├── base.py
+│   ├── battery_status_plugin.py
+│   ├── discord_notifier_plugin.py
 │
 ├── DNSSpoof/
 │   ├── captures/
@@ -392,6 +397,7 @@ raspyjack/
 │   ├── MITM/
 │   └── Nmap/
 │
+└── bin/
 └── Responder/
 ```
 

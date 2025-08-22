@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# ===================================================================
+# NETMODE - Raspyjack Network Mode Controller
+# -------------------------------------------------------------------
+# This script configures the primary Ethernet interface (eth0)
+# for different network attack scenarios.
+# ===================================================================
+
+INTERFACE="eth0"
+
+# Function to stop services and reset the interface to a clean state
+cleanup() {
+    SERIAL_WRITE "Resetting network state..."
+    # Stop any running dnsmasq instance
+    killall dnsmasq 2>/dev/null
+    # Turn off promiscuous mode
+    ip link set "$INTERFACE" promisc off 2>/dev/null
+    # Flush all IP addresses from the interface
+    ip addr flush dev "$INTERFACE"
+    # Ensure the interface is up
+    ip link set "$INTERFACE" up
+    SERIAL_WRITE "Network state has been reset."
+}
+
+# Check for root privileges
+if [[ $EUID -ne 0 ]]; then
+   SERIAL_WRITE "Error: NETMODE needs root privileges."
+   exit 1
+fi
+
+MODE=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+
+# Main logic to switch between modes
+case "$MODE" in
+  DHCP_CLIENT)
+    SERIAL_WRITE "Setting mode: DHCP_CLIENT"
+    cleanup
+    # Request a new IP address from the network's DHCP server
+    # On Raspberry Pi OS, dhcpcd usually handles this automatically.
+    # This command forces a renewal.
+    dhclient -r "$INTERFACE" && dhclient "$INTERFACE"
+    SERIAL_WRITE "DHCP client mode activated."
+    ;;
+
+  DHCP_SERVER)
+    SERIAL_WRITE "Setting mode: DHCP_SERVER"
+    cleanup
+    
+    # Assign a static IP to our interface to act as the gateway
+    ip addr add 172.16.24.1/24 dev "$INTERFACE"
+    
+    # Start dnsmasq to serve IPs on our static subnet
+    # --dhcp-range=<start>,<end>,<netmask>,<lease_time>
+    dnsmasq \
+      --interface="$INTERFACE" \
+      --dhcp-range=172.16.24.100,172.16.24.200,255.255.255.0,12h \
+      --no-daemon
+      
+    SERIAL_WRITE "DHCP server mode activated."
+    ;;
+
+  TRANSPARENT)
+    SERIAL_WRITE "Setting mode: TRANSPARENT"
+    cleanup
+    # Set the interface to promiscuous mode to capture all packets
+    ip link set "$INTERFACE" promisc on
+    SERIAL_WRITE "Transparent/passive mode activated."
+    ;;
+    
+  OFF)
+    SERIAL_WRITE "Setting mode: OFF"
+    cleanup
+    # systemctl restart networking
+    SERIAL_WRITE "Network modes are off."
+    ;;
+
+  *)
+    SERIAL_WRITE "Error: Invalid NETMODE specified."
+    SERIAL_WRITE "Usage: NETMODE [DHCP_CLIENT|DHCP_SERVER|TRANSPARENT|OFF]"
+    exit 1
+    ;;
+esac
