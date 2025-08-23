@@ -13,6 +13,8 @@
 SERIAL_WRITE "Testing STATE commands..."
 sleep 2
 
+BUTTON 5s
+
 SERIAL_WRITE "--> LED SETUP"
 LED SETUP
 sleep 4
@@ -36,6 +38,13 @@ sleep 4
 SERIAL_WRITE "--> LED FAIL"
 LED FAIL
 sleep 4
+
+WAIT_FOR_KEY KEY1 15s "Press KEY1 within 15s to continue to color tests"
+if [ $? -eq 0 ]; then
+	SERIAL_WRITE "KEY1 pressed – continuing"
+else
+	SERIAL_WRITE "KEY1 not pressed (timeout)"
+fi
 
 # --- Section 2: Testing direct COLOR and PATTERN commands ---
 
@@ -69,6 +78,13 @@ sleep 3
 SERIAL_WRITE "--> WHITE"
 LED W
 sleep 3
+
+WAIT_FOR_KEY KEY2 10s "Press KEY2 within 10s to continue to pattern tests"
+if [ $? -eq 0 ]; then
+	SERIAL_WRITE "KEY2 pressed – continuing"
+else
+	SERIAL_WRITE "KEY2 not pressed (timeout)"
+fi
 
 # --- Section 3: Testing PATTERN commands on a single color ---
 

@@ -33,8 +33,19 @@ LOOT_PATH = "/root/Raspyjack/loot"
 # Base directory where all payload scripts are stored
 PAYLOADS_BASE_PATH = "/root/Raspyjack/payloads"
 
-# BCM pin number for button 3 (abort)
-KEY3_PIN = 16
+# BCM pin numbers
+KEY3_PIN = 16  # Abort / Back
+# Additional joystick / button mappings for WAIT_FOR_KEY macro
+KEY_NAME_TO_PIN = {
+    'UP': 6,
+    'DOWN': 19,
+    'LEFT': 5,
+    'RIGHT': 26,
+    'PRESS': 13,
+    'KEY1': 21,
+    'KEY2': 20,
+    'KEY3': 16,
+}
 
 # --- UI Constants ---
 WIDTH, HEIGHT = 128, 128
@@ -109,10 +120,14 @@ class PayloadOrchestrator:
             payload_env["PATH"] = f"{COMMANDS_PATH}:{payload_env.get('PATH', '')}"
             payload_env["LOOT_DIR"] = LOOT_PATH
 
-            # Ensure GPIO for abort button is configured (input w/ pull-up)
+            # Ensure GPIO for abort + macro keys configured (input w/ pull-up)
             try:
                 GPIO.setmode(GPIO.BCM)
-                GPIO.setup(KEY3_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                configured = set()
+                for pin in KEY_NAME_TO_PIN.values():
+                    if pin not in configured:  # avoid duplicate setup
+                        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                        configured.add(pin)
             except Exception as e:
                 print(f"[Abort Setup] Warning: GPIO setup failed: {e}")
 
@@ -208,38 +223,56 @@ class PayloadOrchestrator:
                     time.sleep(0.1)
                     continue
                 
-                line = line.strip().upper()
-                print(f"[Pipe Listener] Received: '{line}'")
-                
-                if line.startswith("LED:"):
-                    parts = line.split(":", 1)[1].split()
-                    if not parts: continue
-                    
-                    arg1 = parts[0]
-                    arg2 = parts[1] if len(parts) > 1 else None
-                    
-                    color_char, pattern = None, None
-                    
-                    if arg1 in STATE_MAP:
-                        state_info = STATE_MAP[arg1]
-                        color_char = state_info["color"]
-                        pattern = state_info["pattern"]
-                        self.led_status['text'] = arg1
-                    elif arg1 in COLOR_MAP:
-                        color_char = arg1
-                        pattern = arg2 or "SOLID"
-                        self.led_status['text'] = f"{color_char} {pattern}"
-
-                    if color_char:
-                        self.led_status['color_code'] = COLOR_MAP[color_char]
-                        self.led_status['pattern'] = pattern
-                        self.led_status['state_change_time'] = time.time()
-
-                elif line.startswith("SERIAL_WRITE:"):
-                    message = line.split(":", 1)[1]
-                    with self.log_lock:
-                        self.log_buffer.append(message)
+                raw = line.rstrip('\n')
+                line_upper = raw.strip().upper()
+                print(f"[Pipe Listener] Received: '{line_upper}'")
+                self._process_pipe_line(line_upper, raw)
         print("[Orchestrator] Pipe listener thread finished.")
+
+    def _process_pipe_line(self, line_upper: str, original_line: str):
+        """Dispatch a single line from the pipe to the proper handler.
+        line_upper: uppercase trimmed version for case-insensitive matching
+        original_line: the raw line (without trailing newline) preserving case for log display."""
+        if line_upper.startswith("LED:"):
+            self._handle_led_command(line_upper)
+        elif line_upper.startswith("SERIAL_WRITE:"):
+            # Preserve everything after first ':' exactly as payload sent (excluding the prefix)
+            message = original_line.split(":", 1)[1]
+            self._handle_serial_write(message)
+        else:
+            # Unknown / pass-through lines could optionally be logged in future
+            pass
+
+    def _handle_led_command(self, line_upper: str):
+        """Parse and apply an LED: command (state or direct color/pattern)."""
+        parts = line_upper.split(":", 1)[1].split()
+        if not parts:
+            return
+        arg1 = parts[0]
+        arg2 = parts[1] if len(parts) > 1 else None
+
+        color_char = None
+        pattern = None
+
+        if arg1 in STATE_MAP:
+            state_info = STATE_MAP[arg1]
+            color_char = state_info["color"]
+            pattern = state_info["pattern"]
+            self.led_status['text'] = arg1
+        elif arg1 in COLOR_MAP:
+            color_char = arg1
+            pattern = arg2 or "SOLID"
+            self.led_status['text'] = f"{color_char} {pattern}"
+
+        if color_char:
+            self.led_status['color_code'] = COLOR_MAP[color_char]
+            self.led_status['pattern'] = pattern
+            self.led_status['state_change_time'] = time.time()
+
+    def _handle_serial_write(self, message: str):
+        """Append a SERIAL_WRITE payload message to log buffer (thread-safe)."""
+        with self.log_lock:
+            self.log_buffer.append(message)
 
     def _abort_monitor(self):
         """Monitor KEY3 button; when pressed, terminate payload process gracefully."""
