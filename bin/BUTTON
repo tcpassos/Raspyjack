@@ -12,17 +12,25 @@ Messages are emitted via SERIAL_WRITE like WAIT_FOR_KEY.
 """
 import sys, time, os
 
-PIPE = "/tmp/raspyjack.pipe"
+# Add main directory to path for centralized GPIO configuration
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from gpio_config import gpio_config
+
+# Load pin mappings from centralized configuration
 KEY_NAME_TO_PIN = {
-    'UP': 6,
-    'DOWN': 19,
-    'LEFT': 5,
-    'RIGHT': 26,
-    'PRESS': 13,
-    'KEY1': 21,
-    'KEY2': 20
+    'UP': gpio_config.key_up_pin,
+    'DOWN': gpio_config.key_down_pin,
+    'LEFT': gpio_config.key_left_pin,
+    'RIGHT': gpio_config.key_right_pin,
+    'PRESS': gpio_config.key_press_pin,
+    'KEY1': gpio_config.key1_pin,
+    'KEY2': gpio_config.key2_pin,
+    'KEY3': gpio_config.key3_pin,
 }
-ALL_PINS = list(set(KEY_NAME_TO_PIN.values()))
+ALL_PINS = list(set(pin for pin in KEY_NAME_TO_PIN.values() if pin > 0))
+
+PIPE = "/tmp/raspyjack.pipe"
 
 def stat_is_fifo(path: str) -> bool:
     try:

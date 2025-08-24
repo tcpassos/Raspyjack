@@ -6,13 +6,14 @@ import sys
 # This ensures that imports like 'import LCD_1in44' work correctly from the main project directory.
 sys.path.append(os.path.abspath(os.path.join(__file__, '..', '..')))
 
+from gpio_config import gpio_config
+
 # ---------------------------- Standard library ----------------------------
 import time
 import subprocess
 import threading
 import collections
 import select
-import math
 import socket
 import signal
 
@@ -20,8 +21,7 @@ import signal
 # These are expected to be installed on the Raspyjack system.
 import RPi.GPIO as GPIO
 import LCD_1in44
-import LCD_Config
-from PIL import Image, ImageDraw, ImageFont, ImageColor
+from PIL import Image, ImageDraw, ImageFont
 
 # --- Constants ---
 # Communication pipe for payload commands
@@ -33,18 +33,16 @@ LOOT_PATH = "/root/Raspyjack/loot"
 # Base directory where all payload scripts are stored
 PAYLOADS_BASE_PATH = "/root/Raspyjack/payloads"
 
-# BCM pin numbers
-KEY3_PIN = 16  # Abort / Back
 # Additional joystick / button mappings for WAIT_FOR_KEY macro
 KEY_NAME_TO_PIN = {
-    'UP': 6,
-    'DOWN': 19,
-    'LEFT': 5,
-    'RIGHT': 26,
-    'PRESS': 13,
-    'KEY1': 21,
-    'KEY2': 20,
-    'KEY3': 16,
+    'UP': gpio_config.key_up_pin,
+    'DOWN': gpio_config.key_down_pin,
+    'LEFT': gpio_config.key_left_pin,
+    'RIGHT': gpio_config.key_right_pin,
+    'PRESS': gpio_config.key_press_pin,
+    'KEY1': gpio_config.key1_pin,
+    'KEY2': gpio_config.key2_pin,
+    'KEY3': gpio_config.key3_pin
 }
 
 # --- UI Constants ---
@@ -177,12 +175,13 @@ class PayloadOrchestrator:
 
             # Wait for a fresh KEY3 press (falling edge) before returning
             try:
-                last_state = GPIO.input(KEY3_PIN)
+                key3_pin = gpio_config.key3_pin
+                last_state = GPIO.input(key3_pin)
                 # Continue drawing dashboard while waiting
                 while True:
                     self._draw_dashboard()
                     try:
-                        state = GPIO.input(KEY3_PIN)
+                        state = GPIO.input(key3_pin)
                     except Exception:
                         break
                     if last_state == 1 and state == 0:
@@ -279,9 +278,10 @@ class PayloadOrchestrator:
         print("[Abort] Monitor thread started (press KEY3 to abort).")
         # Debounce + edge detection simple approach
         last_state = 1
+        key3_pin = gpio_config.key3_pin
         while self.payload_running and hasattr(self, '_payload_process') and self._payload_process.poll() is None:
             try:
-                state = GPIO.input(KEY3_PIN)
+                state = GPIO.input(key3_pin)
             except Exception:
                 break
             if last_state == 1 and state == 0:  # falling edge (pressed)

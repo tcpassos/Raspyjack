@@ -308,7 +308,7 @@ class template():
 ### Get any button press ###
 def getButton():
     while 1:
-        for item, pin in PINS.items():
+        for item, pin in gpio_config.pins.items():
             val = GPIO.input(pin)
             if item in EDGE_BUTTONS:
                 prev = _button_prev.get(item, 1)
@@ -383,36 +383,46 @@ def is_mitm_running():
 
 def SaveConfig() -> None:
     data = {
-        "PINS":   PINS,
-        "PATHS":  {"IMAGEBROWSER_START": default.imgstart_path},
+        "PINS": gpio_config.pins,
+        "PATHS": {"IMAGEBROWSER_START": default.imgstart_path},
         "COLORS": color.Dictonary(),
     }
     print(json.dumps(data, indent=4, sort_keys=True))
     with open(default.config_file, "w") as wf:
         json.dump(data, wf, indent=4, sort_keys=True)
+    
+    # Update the gpio_config module's internal state to keep it in sync
+    gpio_config._config_data = data
+    gpio_config._pins = data["PINS"]
+    
     print("Config has been saved!")
 
 
 
 def LoadConfig():
-    global PINS
     global default
 
     if not (os.path.exists(default.config_file) and os.path.isfile(default.config_file)):
         print("Can't find a config file! Creating one at '" + default.config_file + "'...")
         SaveConfig()
 
+    # Reload GPIO configuration
+    gpio_config.load_config()
+
     with open(default.config_file, "r") as rf:
         data = json.load(rf)
         default.imgstart_path = data["PATHS"].get("IMAGEBROWSER_START", default.imgstart_path)
-        PINS = data.get("PINS", PINS)
+        
+        # Colors are still loaded from the config file
         try:
             color.LoadDictonary(data["COLORS"])
         except:
             pass
+            
+        # Setup GPIO
         GPIO.setmode(GPIO.BCM)
-        for item in PINS:
-            GPIO.setup(PINS[item], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        for pin_name, pin_number in gpio_config.pins.items():
+            GPIO.setup(pin_number, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     print("Config loaded!")
 
 # ---------------- Plugin enable/disable menu -----------------------------
@@ -713,7 +723,7 @@ def GetColor(final_color="#000000"):
     render_offset = default.updown_pos
     desired_color = list(int(final_color[i:i+2], 16) for i in (1, 3, 5))
 
-    while GPIO.input(PINS["KEY_PRESS_PIN"]):
+    while GPIO.input(gpio_config.key_press_pin):
         render_up = False
         render_down = False
         final_color='#%02x%02x%02x' % (desired_color[0],desired_color[1],desired_color[2])
@@ -776,7 +786,7 @@ def GetIpValue(prefix):
     render_offset = default.updown_pos
     color.DrawMenuBackground()
     time.sleep(0.4)
-    while GPIO.input(PINS["KEY_PRESS_PIN"]):
+    while GPIO.input(gpio_config.key_press_pin):
         render_up = False
         render_down = False
 
@@ -816,12 +826,12 @@ def Gamepad():
     m.which = m.which + "1"
     # Don't render if you dont need to => less flickering
     lastimg = [0, 0, 0, 0, 0, 0, 0]
-    while GPIO.input(PINS["KEY_PRESS_PIN"]):
+    while GPIO.input(gpio_config.key_press_pin):
         write = ""
         x = 0
         ######
         render_color = color.background
-        i = GPIO.input(PINS["KEY_UP_PIN"])
+        i = GPIO.input(gpio_config.key_up_pin)
         if i == 0:
             render_color = color.gamepad_fill
             write = write + " UP"
@@ -832,7 +842,7 @@ def Gamepad():
         x += 1
         ######
         render_color = color.background
-        i = GPIO.input(PINS["KEY_LEFT_PIN"])
+        i = GPIO.input(gpio_config.key_left_pin)
         if i == 0:
             render_color = color.gamepad_fill
             write = write + " LEFT"
@@ -843,7 +853,7 @@ def Gamepad():
         x += 1
         ######
         render_color = color.background
-        i = GPIO.input(PINS["KEY_RIGHT_PIN"])
+        i = GPIO.input(gpio_config.key_right_pin)
         if i == 0:
             render_color = color.gamepad_fill
             write = write + " RIGHT"
@@ -854,7 +864,7 @@ def Gamepad():
         x += 1
         ######
         render_color = color.background
-        i = GPIO.input(PINS["KEY_DOWN_PIN"])
+        i = GPIO.input(gpio_config.key_down_pin)
         if i == 0:
             render_color = color.gamepad_fill
             write = write + " DOWN"
@@ -865,7 +875,7 @@ def Gamepad():
         x += 1
         ######
         render_color = color.background
-        i = GPIO.input(PINS["KEY1_PIN"])
+        i = GPIO.input(gpio_config.key1_pin)
         if i == 0:
             render_color = color.gamepad_fill
             write = write + " Q"
@@ -876,7 +886,7 @@ def Gamepad():
         x += 1
         ######
         render_color = color.background
-        i = GPIO.input(PINS["KEY2_PIN"])
+        i = GPIO.input(gpio_config.key2_pin)
         if i == 0:
             render_color = color.gamepad_fill
             write = write + " E"
@@ -887,7 +897,7 @@ def Gamepad():
         x += 1
         ######
         render_color = color.background
-        i = GPIO.input(PINS["KEY3_PIN"])
+        i = GPIO.input(gpio_config.key3_pin)
         if i == 0:
             render_color = color.gamepad_fill
             write = write + " R"
@@ -1658,7 +1668,7 @@ def _setup_gpio() -> None:
     """
     # --- GPIO -------------------------------------------------------------
     GPIO.setmode(GPIO.BCM)
-    for pin in PINS.values():                     # all buttons back to inputs
+    for pin in gpio_config.pins.values():                     # all buttons back to inputs
         GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
     # --- LCD --------------------------------------------------------------
@@ -1752,7 +1762,7 @@ def exec_payload(filename: str) -> None:
 
     # small debounce: 300 ms max
     t0 = time.time()
-    while any(GPIO.input(p) == 0 for p in PINS.values()) and time.time() - t0 < .3:
+    while any(GPIO.input(p) == 0 for p in gpio_config.pins.values()) and time.time() - t0 < .3:
         time.sleep(.03)
 
     screen_lock.clear()                            # threads can run again
@@ -2206,34 +2216,26 @@ image = Image.new("RGB", (LCD.width, LCD.height), "WHITE")
 draw = ImageDraw.Draw(image)
 text_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 9)
 icon_font = ImageFont.truetype('/usr/share/fonts/truetype/fontawesome/fa-solid-900.ttf', 12)
-font = text_font  # Keep backward compatibility
+font = text_font
 
-### Defining PINS, threads, loading JSON ###
-PINS = {
-    "KEY_UP_PIN": 6,
-    "KEY_DOWN_PIN": 19,
-    "KEY_LEFT_PIN": 5,
-    "KEY_RIGHT_PIN": 26,
-    "KEY_PRESS_PIN": 13,
-    "KEY1_PIN": 21,
-    "KEY2_PIN": 20,
-    "KEY3_PIN": 16
-}
-# edge-triggered set
-EDGE_BUTTONS = {
-    "KEY1_PIN",
-    "KEY2_PIN",
-    "KEY3_PIN",
-    "KEY_LEFT_PIN",
-    "KEY_RIGHT_PIN",
-    "KEY_PRESS_PIN"
-} 
+### Defining GPIO configuration ###
+from gpio_config import gpio_config
+
+EDGE_BUTTONS = [
+    gpio_config.key1_pin,
+    gpio_config.key2_pin,
+    gpio_config.key3_pin,
+    gpio_config.key_press_pin,
+    gpio_config.key_left_pin,
+    gpio_config.key_right_pin
+]
+
 _button_prev = {}
 LoadConfig()
 m = DisposableMenu()
 
 # Initialize previous states for edge-detected buttons
-for _bn, _pin in PINS.items():
+for _bn, _pin in gpio_config.pins.items():
     if _bn in EDGE_BUTTONS:
         try:
             _button_prev[_bn] = GPIO.input(_pin)

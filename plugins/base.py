@@ -46,12 +46,12 @@ Design goals:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import importlib
 import time
 import traceback
 from types import ModuleType
-from typing import Callable, List, Optional, Sequence
+from typing import List, Sequence
 
 
 class Plugin:
