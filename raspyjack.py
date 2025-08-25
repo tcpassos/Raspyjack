@@ -19,8 +19,10 @@ from ui.widgets import (
     dialog_info,
     yn_dialog,
     ip_value_picker,
-    color_picker,  # newly added color picker convenience function
+    color_picker,
 )
+from ui.status_bar import StatusBar
+from ui.color_scheme import ColorScheme
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
@@ -77,76 +79,6 @@ except ImportError as e:
         return False
 _stop_evt = threading.Event()
 screen_lock = threading.Event()
-
-class StatusBar:
-    """Activity and temporary status management"""
-    __slots__ = ("_activity", "_temp_msg", "_temp_expires", "_lock")
-
-    def __init__(self):
-        self._activity: str = ""
-        self._temp_msg: str = ""
-        self._temp_expires: float = 0.0
-        self._lock = threading.Lock()
-
-    # ---- Activity status -------------------------------------------------
-    def set_activity(self, new_value: str):
-        if new_value is None:
-            return
-        with self._lock:
-            if new_value != self._activity:
-                self._activity = new_value
-
-    def get_activity(self) -> str:
-        with self._lock:
-            return self._activity
-
-    # ---- Temporary status ------------------------------------------------
-    def set_temp_status(self, message: str, ttl: float = 3.0):
-        if not message:
-            return
-        ttl = max(0.5, ttl)
-        expires = time.time() + ttl
-        with self._lock:
-            self._temp_msg = message
-            self._temp_expires = expires
-
-    # ---- Composition -----------------------------------------------------
-    def get_status_msg(self) -> str:
-        now = time.time()
-        with self._lock:
-            if self._temp_msg and now < self._temp_expires:
-                return self._temp_msg
-            if self._temp_msg and now >= self._temp_expires:
-                # clear expired temporary message
-                self._temp_msg = ""
-            return self._activity
-
-    # ---- Rendering ------------------------------------------------------
-    def render(self, draw_obj, font_obj) -> None:
-        """Render the top status bar."""
-        try:
-            # Background band
-            draw_obj.rectangle((0, 0, 128, 12), fill="#000000")
-            # Status (may be empty)
-            status_txt = self.get_status_msg()
-            if status_txt:
-                # Centered position
-                try:
-                    status_width = font_obj.getbbox(status_txt)[2]
-                except AttributeError:  # Fallback for older PIL
-                    status_width = font_obj.getsize(status_txt)[0]
-                draw_obj.text(((128 - status_width) / 2, 0), status_txt, fill="WHITE", font=font_obj)
-        except Exception:
-            pass
-
-    # ---- Introspection --------------------------------------------------
-    def is_busy(self) -> bool:
-        """Return True if there is any (temp or activity) message displayed.
-
-        Plugins can use this to decide whether to hide small indicators to
-        avoid visual clutter when status text is present.
-        """
-        return bool(self.get_status_msg())
 
 status_bar = StatusBar()
 
@@ -233,82 +165,9 @@ class Defaults():
     payload_log  = install_path + "loot/payload.log"
 
 
-### Color scheme class ###
-class template():
-    # Color values
-    border = "#0e0e6b"
-    background = "#000000"
-    text = "#9c9ccc"
-    selected_text = "#EEEEEE"
-    select = "#141494"
-    gamepad = select
-    gamepad_fill = selected_text
-
-    # Render the border
-    def DrawBorder(self):
-        draw.line([(127, 12), (127, 127)], fill=self.border, width=5)
-        draw.line([(127, 127), (0, 127)], fill=self.border, width=5)
-        draw.line([(0, 127), (0, 12)], fill=self.border, width=5)
-        draw.line([(0, 12), (128, 12)], fill=self.border, width=5)
-
-    # Render inside of the border
-    def DrawMenuBackground(self):
-        draw.rectangle((3, 14, 124, 124), fill=self.background)
-
-    # I don't know how to python pass 'class.variable' as reference properly
-    def Set(self, index, color):
-        if index == 0:
-            self.background = color
-        elif index == 1:
-            self.border = color
-            self.DrawBorder()
-        elif index == 2:
-            self.text = color
-        elif index == 3:
-            self.selected_text = color
-        elif index == 4:
-            self.select = color
-        elif index == 5:
-            self.gamepad = color
-        elif index == 6:
-            self.gamepad_fill = color
-
-    def Get(self, index):
-        if index == 0:
-            return self.background
-        elif index == 1:
-            return self.border
-        elif index == 2:
-            return self.text
-        elif index == 3:
-            return self.selected_text
-        elif index == 4:
-            return self.select
-        elif index == 5:
-            return self.gamepad
-        elif index == 6:
-            return self.gamepad_fill
-
-    # Methods for JSON export
-    def Dictonary(self):
-        x = {
-            "BORDER" : self.border,
-            "BACKGROUND" : self.background,
-            "TEXT" : self.text,
-            "SELECTED_TEXT" : self.selected_text,
-            "SELECTED_TEXT_BACKGROUND" : self.select,
-            "GAMEPAD" : self.gamepad,
-            "GAMEPAD_FILL" : self.gamepad_fill
-        }
-        return x
-    def LoadDictonary(self, dic):
-        self.Set(1,dic["BORDER"])
-        self.background = dic["BACKGROUND"]
-        self.text = dic["TEXT"]
-        self.selected_text = dic["SELECTED_TEXT"]
-        self.select = dic["SELECTED_TEXT_BACKGROUND"]
-        self.gamepad = dic["GAMEPAD"]
-        self.gamepad_fill = dic["GAMEPAD_FILL"]
+### Color scheme ###
+color: "ColorScheme"  # forward annotation for linters
+ 
 
 ####### Simple methods #######
 ### Get any button press ###
@@ -391,7 +250,7 @@ def SaveConfig() -> None:
     data = {
         "PINS": gpio_config.pins,
         "PATHS": {"IMAGEBROWSER_START": default.imgstart_path},
-        "COLORS": color.Dictonary(),
+        "COLORS": color.to_dict(),
     }
     print(json.dumps(data, indent=4, sort_keys=True))
     with open(default.config_file, "w") as wf:
@@ -421,7 +280,7 @@ def LoadConfig():
         
         # Colors are still loaded from the config file
         try:
-            color.LoadDictonary(data["COLORS"])
+            color.load_dict(data["COLORS"])
         except:
             pass
             
@@ -495,7 +354,7 @@ def GetMenuPic(a):
     slide=0
     while 1:
         arr=a[slide]
-        color.DrawMenuBackground()
+        color.draw_menu_background()
         for i in range(0, len(arr)):
             render_text = arr[i]
             render_color = color.text
@@ -519,7 +378,7 @@ def GetMenuPic(a):
 ### Render first lines of array ###
 # Kinda useless but whatever
 def ShowLines(arr,bold=[]):
-    color.DrawMenuBackground()
+    color.draw_menu_background()
     arr = arr[-8:]
     for i in range(0, len(arr)):
         render_text = arr[i]
@@ -574,7 +433,7 @@ def GetMenuString(inlist, duplicates=False):
         _menu_indices[m.which] = index
 
         # -- 3/ Rendu --------------------------------------------------------
-        color.DrawMenuBackground()
+        color.draw_menu_background()
         for i, raw in enumerate(window):
             txt = raw if not duplicates else raw.split('#', 1)[1]
             line = txt  # Remove cursor mark, use rectangle highlight only
@@ -669,14 +528,15 @@ def GetMenuString(inlist, duplicates=False):
 
 
 ### Draw up down triangles ###
-color = template()
+# Instantiate the global color scheme (new class) with a dynamic draw reference.
+color = ColorScheme(draw_ref=lambda: draw)
 
 ### Set a color using ColorPicker widget ###
 def SetColor(a: int) -> None:
     """Open the color picker widget for theme color index 'a'."""
     m.which = m.which + "1"
     try:
-        initial = color.Get(a)
+        initial = color.get_color(a)
         picked = color_picker(_widget_context, initial_color=initial)
         if yn_dialog(
             _widget_context,
@@ -685,7 +545,7 @@ def SetColor(a: int) -> None:
             no_text="No",
             second_line=("    " + picked),
         ):
-            color.Set(a, picked)
+            color.set_color(a, picked)
             dialog(_widget_context, "   Done!")
     finally:
         # Always pop submenu marker
@@ -694,7 +554,7 @@ def SetColor(a: int) -> None:
 
 ### Gamepad ###
 def Gamepad():
-    color.DrawMenuBackground()
+    color.draw_menu_background()
     time.sleep(0.5)
     draw.rectangle((25, 55, 45, 73), outline=color.gamepad,
                    fill=color.background)
@@ -886,7 +746,7 @@ def DisplayScrollableInfo(info_lines):
         window = info_lines[offset:offset + WINDOW]
 
         # Draw display
-        color.DrawMenuBackground()
+        color.draw_menu_background()
         for i, line in enumerate(window):
             fill = color.selected_text if i == (index - offset) else color.text
             # Highlight current line
@@ -1008,7 +868,7 @@ def ImageExplorer() -> None:
                     image.paste(img.resize((128, 128)))
                 time.sleep(1)
                 getButton()
-                color.DrawBorder()
+                color.draw_border()
     m.which = m.which[:-1]
 
 
@@ -1631,8 +1491,8 @@ def exec_payload(filename: str) -> None:
     _setup_gpio()                                  # SPI/DC/RST/CS back
 
     # rebuild the current menu image
-    color.DrawMenuBackground()
-    color.DrawBorder()
+    color.draw_menu_background()
+    color.draw_border()
     ShowLines(m.GetMenuList())                     # text + cursor
     LCD.LCD_ShowImage(image, 0, 0)                 # push *before* unlock
 
@@ -1863,7 +1723,7 @@ def GetMenuCarousel(inlist, duplicates=False):
     
     while True:
         # Draw carousel
-        color.DrawMenuBackground()
+        color.draw_menu_background()
         
         # Current item (center, large)
         current_item = inlist[index]
@@ -1946,7 +1806,7 @@ def GetMenuGrid(inlist, duplicates=False):
         window = inlist[start_idx:start_idx + GRID_ITEMS]
         
         # Draw grid
-        color.DrawMenuBackground()
+        color.draw_menu_background()
         
         for i, item in enumerate(window):
             if i >= GRID_ITEMS:
@@ -2045,8 +1905,8 @@ def main():
     )
     
     # Draw background once
-    color.DrawMenuBackground()
-    color.DrawBorder()
+    color.draw_menu_background()
+    color.draw_border()
 
     start_background_loops()
 

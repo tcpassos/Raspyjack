@@ -230,7 +230,7 @@ class ScrollableText(BaseWidget):
             window = wrapped_lines[offset:offset + WINDOW]
 
             # Draw display
-            self.ctx.color.DrawMenuBackground()
+            self.ctx.color.draw_menu_background()
             
             # Draw title if provided
             if title:
@@ -282,7 +282,7 @@ class IpValuePicker(ValuePickerWidget):
         """Show IP value picker and return selected value."""
         value = initial_value
         render_offset = self.ctx.default.updown_pos
-        self.ctx.color.DrawMenuBackground()
+        self.ctx.color.draw_menu_background()
         time.sleep(0.4)
 
         import RPi.GPIO as GPIO
@@ -326,7 +326,7 @@ class ColorPicker(ValuePickerWidget):
     
     def show(self, initial_color: str = "#000000") -> str:
         """Show color picker and return selected color as hex string."""
-        self.ctx.color.DrawMenuBackground()
+        self.ctx.color.draw_menu_background()
         time.sleep(0.4)
         i_rgb = 0
         render_offset = self.ctx.default.updown_pos
