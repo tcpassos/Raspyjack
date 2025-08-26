@@ -21,13 +21,14 @@ class StatusBar:
     - Provide a simple `render` method to draw on a Pillow `ImageDraw` object
     - Offer `is_busy` to let plugins decide whether to display extra adornments
     """
-    __slots__ = ("_activity", "_temp_msg", "_temp_expires", "_lock")
+    __slots__ = ("_activity", "_temp_msg", "_temp_expires", "_lock", "_hidden")
 
     def __init__(self) -> None:
         self._activity: str = ""
         self._temp_msg: str = ""
         self._temp_expires: float = 0.0
         self._lock = threading.Lock()
+        self._hidden = False
 
     # ---- Activity status -------------------------------------------------
     def set_activity(self, new_value: Optional[str]) -> None:
@@ -55,6 +56,8 @@ class StatusBar:
     def get_status_msg(self) -> str:
         now = time.time()
         with self._lock:
+            if self._hidden:
+                return ""
             if self._temp_msg and now < self._temp_expires:
                 return self._temp_msg
             if self._temp_msg and now >= self._temp_expires:
@@ -70,14 +73,15 @@ class StatusBar:
         font_obj: PIL.ImageFont.FreeTypeFont (or any object with getbbox / getsize)
         """
         try:
-            # Background band (full width, 12px tall)
+            # Always draw bar background if not hidden (get_status_msg handles hidden state)
+            if self.is_hidden():
+                return
             draw_obj.rectangle((0, 0, 128, 12), fill="#000000")
-            status_txt = self.get_status_msg()
+            status_txt = self.get_status_msg()  # Will be empty string if no message
             if status_txt:
-                # Center horizontally
                 try:
                     status_width = font_obj.getbbox(status_txt)[2]
-                except AttributeError:  # Fallback for older PIL
+                except AttributeError:
                     status_width = font_obj.getsize(status_txt)[0]
                 draw_obj.text(((128 - status_width) / 2, 0), status_txt, fill="WHITE", font=font_obj)
         except Exception:
@@ -88,5 +92,18 @@ class StatusBar:
     def is_busy(self) -> bool:
         """True if any (temp or activity) message is currently displayed."""
         return bool(self.get_status_msg())
+
+    # ---- Visibility control ---------------------------------------------
+    def hide(self):
+        with self._lock:
+            self._hidden = True
+
+    def show(self):
+        with self._lock:
+            self._hidden = False
+
+    def is_hidden(self) -> bool:
+        with self._lock:
+            return self._hidden
 
 __all__ = ["StatusBar"]

@@ -55,9 +55,9 @@ class ColorScheme:
     # ------------------------------------------------------------------
     # Rendering helpers
     # ------------------------------------------------------------------
-    def draw_border(self) -> None:
+    def draw_border(self, draw_override=None) -> None:
         """Render the outer UI border onto the current draw surface."""
-        d = self._draw_ref and self._draw_ref()
+        d = draw_override or (self._draw_ref and self._draw_ref())
         if not d:
             return
         d.line([(127, 12), (127, 127)], fill=self.border, width=5)
@@ -65,54 +65,34 @@ class ColorScheme:
         d.line([(0, 127), (0, 12)], fill=self.border, width=5)
         d.line([(0, 12), (128, 12)], fill=self.border, width=5)
 
-    def draw_menu_background(self) -> None:
+    def draw_menu_background(self, draw_override=None) -> None:
         """Fill the menu interior area using the background color."""
-        d = self._draw_ref and self._draw_ref()
+        d = draw_override or (self._draw_ref and self._draw_ref())
         if not d:
             return
         d.rectangle((3, 14, 124, 124), fill=self.background)
 
     # ------------------------------------------------------------------
-    # Color access (index based for legacy compatibility)
+    # Color access
     # ------------------------------------------------------------------
-    def set_color(self, index: int, value: str) -> None:
-        """Set a color by legacy index mapping.
+    def set_color(self, key: str, value: str) -> None:
+        """Set a color by its key.
 
-        Automatically re-renders the border if index 1 (border) changes.
+        Automatically re-renders the border if the 'border' color changes.
         """
-        if index == 0:
-            self.background = value
-        elif index == 1:
-            self.border = value
-            # Re-draw immediately for visual feedback
-            self.draw_border()
-        elif index == 2:
-            self.text = value
-        elif index == 3:
-            self.selected_text = value
-        elif index == 4:
-            self.select = value
-        elif index == 5:
-            self.gamepad = value
-        elif index == 6:
-            self.gamepad_fill = value
+        if hasattr(self, key):
+            setattr(self, key, value)
+            if key == "border":
+                # Re-draw immediately for visual feedback
+                self.draw_border()
+        else:
+            raise KeyError(f"Unknown color key: {key}")
 
-    def get_color(self, index: int) -> str:
-        if index == 0:
-            return self.background
-        if index == 1:
-            return self.border
-        if index == 2:
-            return self.text
-        if index == 3:
-            return self.selected_text
-        if index == 4:
-            return self.select
-        if index == 5:
-            return self.gamepad
-        if index == 6:
-            return self.gamepad_fill
-        raise IndexError(f"Unknown color index: {index}")
+    def get_color(self, key: str) -> str:
+        """Get a color by its key."""
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(f"Unknown color key: {key}")
 
     # ------------------------------------------------------------------
     # Serialization helpers
@@ -131,14 +111,19 @@ class ColorScheme:
 
     def load_dict(self, data: Dict[str, str]) -> None:
         """Load colors from a dict produced by `to_dict` (tolerant)."""
-        try:
-            self.set_color(1, data["BORDER"])  # ensure border redraw
-        except KeyError:
-            pass
-        self.background = data.get("BACKGROUND", self.background)
-        self.text = data.get("TEXT", self.text)
-        self.selected_text = data.get("SELECTED_TEXT", self.selected_text)
-        self.select = data.get("SELECTED_TEXT_BACKGROUND", self.select)
-        self.gamepad = data.get("GAMEPAD", self.gamepad)
-        self.gamepad_fill = data.get("GAMEPAD_FILL", self.gamepad_fill)
+        if not data:
+            return
+        # Accept either upper or lower case keys.
+        norm = {k.upper(): v for k, v in data.items()}
+        # Assign using attribute names; trigger redraw for border explicitly.
+        if "BORDER" in norm:
+            self.border = norm["BORDER"]
+        self.background = norm.get("BACKGROUND", self.background)
+        self.text = norm.get("TEXT", self.text)
+        self.selected_text = norm.get("SELECTED_TEXT", self.selected_text)
+        self.select = norm.get("SELECTED_TEXT_BACKGROUND", self.select)
+        self.gamepad = norm.get("GAMEPAD", self.gamepad)
+        self.gamepad_fill = norm.get("GAMEPAD_FILL", self.gamepad_fill)
+        # Redraw border if a draw context exists
+        self.draw_border()
 

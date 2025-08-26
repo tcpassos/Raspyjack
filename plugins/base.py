@@ -90,56 +90,58 @@ class PluginManager:
         self._last_tick: float = time.time()
         self._ctx: dict = {}
         self.verbose = verbose
+        # Internal synchronization
+        import threading
+        self._lock = threading.RLock()
+        # Overlay snapshot (RGBA) updated after ticks
+        from PIL import Image
+        self._overlay_image = Image.new('RGBA', (128, 128), (0, 0, 0, 0))
 
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
     def load_all(self, module_names: Sequence[str], context: dict) -> None:
-        self._ctx = context
-        for name in module_names:
-            name = name.strip()
-            if not name:
-                continue
-            mod_qual = f"plugins.{name}"
-            try:
-                mod = importlib.import_module(mod_qual)
-            except Exception as e:
-                self._log(f"[PLUGIN] Failed to import '{mod_qual}': {e}")
-                self._log(traceback.format_exc())
-                continue
+        with self._lock:
+            self._ctx = context
+            for name in module_names:
+                name = name.strip()
+                if not name:
+                    continue
+                mod_qual = f"plugins.{name}"
+                try:
+                    mod = importlib.import_module(mod_qual)
+                except Exception as e:
+                    self._log(f"[PLUGIN] Failed to import '{mod_qual}': {e}")
+                    self._log(traceback.format_exc())
+                    continue
 
-            # Strategy 1: explicit `plugin` variable
-            instance = getattr(mod, "plugin", None)
+                instance = getattr(mod, "plugin", None)
+                if instance is None:
+                    for attr in dir(mod):
+                        obj = getattr(mod, attr)
+                        if isinstance(obj, type) and issubclass(obj, Plugin) and obj is not Plugin:
+                            try:
+                                instance = obj()
+                            except Exception as e:
+                                self._log(f"[PLUGIN] Could not instantiate {obj}: {e}")
+                            break
 
-            # Strategy 2: first subclass of Plugin
-            if instance is None:
-                for attr in dir(mod):
-                    obj = getattr(mod, attr)
-                    if isinstance(obj, type) and issubclass(obj, Plugin) and obj is not Plugin:
-                        try:
-                            instance = obj()
-                        except Exception as e:  # instantiation failure
-                            self._log(f"[PLUGIN] Could not instantiate {obj}: {e}")
-                        break
+                if instance is None:
+                    self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
+                    continue
 
-            if instance is None:
-                self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
-                continue
+                try:
+                    instance.on_load(context)
+                except Exception as e:
+                    self._log(f"[PLUGIN] on_load error in {instance.name}: {e}")
+                    self._log(traceback.format_exc())
+                    continue
 
-            # Call on_load
-            try:
-                instance.on_load(context)
-            except Exception as e:
-                self._log(f"[PLUGIN] on_load error in {instance.name}: {e}")
-                self._log(traceback.format_exc())
-                continue  # skip registering
+                self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
 
-            self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
-
-        # Order by priority
-        self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
-        if self.verbose:
-            self._log("[PLUGIN] Loaded: " + ", ".join(p.instance.name for p in self._loaded) or "(none)")
+            self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
+            if self.verbose:
+                self._log("[PLUGIN] Loaded: " + ", ".join(p.instance.name for p in self._loaded) or "(none)")
 
     # ------------------------------------------------------------------
     # New configuration based loading
@@ -162,120 +164,145 @@ class PluginManager:
 
         Any plugin with enabled set to false (or missing) is skipped.
         """
-        self._ctx = context
-        for module_name, pconf in config.items():
-            if not isinstance(pconf, dict):
-                continue
-            if not pconf.get("enabled", False):
-                continue
-            mod_qual = f"plugins.{module_name}"
-            try:
-                mod = importlib.import_module(mod_qual)
-            except Exception as e:
-                self._log(f"[PLUGIN] Failed to import '{mod_qual}': {e}")
-                continue
+        with self._lock:
+            self._ctx = context
+            for module_name, pconf in config.items():
+                if not isinstance(pconf, dict):
+                    continue
+                if not pconf.get("enabled", False):
+                    continue
+                mod_qual = f"plugins.{module_name}"
+                try:
+                    mod = importlib.import_module(mod_qual)
+                except Exception as e:
+                    self._log(f"[PLUGIN] Failed to import '{mod_qual}': {e}")
+                    continue
 
-            instance = getattr(mod, "plugin", None)
-            if instance is None:
-                for attr in dir(mod):
-                    obj = getattr(mod, attr)
-                    if isinstance(obj, type) and issubclass(obj, Plugin) and obj is not Plugin:
+                instance = getattr(mod, "plugin", None)
+                if instance is None:
+                    for attr in dir(mod):
+                        obj = getattr(mod, attr)
+                        if isinstance(obj, type) and issubclass(obj, Plugin) and obj is not Plugin:
+                            try:
+                                instance = obj()
+                            except Exception as e:
+                                self._log(f"[PLUGIN] Could not instantiate {obj}: {e}")
+                            break
+                if instance is None:
+                    self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
+                    continue
+
+                if isinstance(pconf, dict):
+                    if "priority" in pconf:
                         try:
-                            instance = obj()
-                        except Exception as e:
-                            self._log(f"[PLUGIN] Could not instantiate {obj}: {e}")
-                        break
-            if instance is None:
-                self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
-                continue
+                            instance.priority = int(pconf["priority"])
+                        except Exception:
+                            pass
+                    instance.config = pconf
+                    if "options" in pconf and isinstance(pconf["options"], dict):
+                        instance.options = pconf["options"]
 
-            # Apply per-plugin config (priority override + options storage)
-            if isinstance(pconf, dict):
-                if "priority" in pconf:
-                    try:
-                        instance.priority = int(pconf["priority"])
-                    except Exception:
-                        pass
-                # Store whole config (including options) for plugin access
-                instance.config = pconf
-                # Convenience: direct .options attribute if present
-                if "options" in pconf and isinstance(pconf["options"], dict):
-                    instance.options = pconf["options"]
+                try:
+                    instance.on_load(context)
+                except Exception as e:
+                    self._log(f"[PLUGIN] on_load error in {instance.name}: {e}")
+                    continue
 
-            try:
-                instance.on_load(context)
-            except Exception as e:
-                self._log(f"[PLUGIN] on_load error in {instance.name}: {e}")
-                continue
+                self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
 
-            self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
-
-        self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
-        if self.verbose:
-            self._log("[PLUGIN] Loaded (config): " + ", ".join(p.instance.name for p in self._loaded) or "(none)")
+            self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
+            if self.verbose:
+                self._log("[PLUGIN] Loaded (config): " + ", ".join(p.instance.name for p in self._loaded) or "(none)")
 
     def unload_all(self) -> None:
-        for lp in self._loaded:
-            try:
-                lp.instance.on_unload()
-            except Exception as e:
-                self._log(f"[PLUGIN] on_unload error in {lp.instance.name}: {e}")
-        self._loaded.clear()
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_unload()
+                except Exception as e:
+                    self._log(f"[PLUGIN] on_unload error in {lp.instance.name}: {e}")
+            self._loaded.clear()
 
     # ------------------------------------------------------------------
     # Dispatch helpers
     # ------------------------------------------------------------------
     def dispatch_tick(self) -> None:
-        now = time.time()
-        dt = now - self._last_tick
-        self._last_tick = now
-        for lp in self._loaded:
-            try:
-                lp.instance.on_tick(dt)
-            except Exception:
-                self._log(f"[PLUGIN] tick error in {lp.instance.name}")
+        with self._lock:
+            now = time.time()
+            dt = now - self._last_tick
+            self._last_tick = now
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_tick(dt)
+                except Exception:
+                    self._log(f"[PLUGIN] tick error in {lp.instance.name}")
 
     def dispatch_button(self, name: str) -> None:
-        for lp in self._loaded:
-            try:
-                lp.instance.on_button(name)
-            except Exception:
-                self._log(f"[PLUGIN] button error in {lp.instance.name}")
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_button(name)
+                except Exception:
+                    self._log(f"[PLUGIN] button error in {lp.instance.name}")
 
     def dispatch_render_overlay(self, image, draw) -> None:
-        for lp in self._loaded:
-            try:
-                lp.instance.on_render_overlay(image, draw)
-            except Exception:
-                self._log(f"[PLUGIN] render_overlay error in {lp.instance.name}")
+        # This remains for legacy direct rendering paths; prefer overlay snapshot methods.
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_render_overlay(image, draw)
+                except Exception:
+                    self._log(f"[PLUGIN] render_overlay error in {lp.instance.name}")
+
+    # --- Overlay snapshot pipeline ---------------------------------
+    def rebuild_overlay(self, size: tuple[int, int] = (128, 128)) -> None:
+        """Rebuild cached overlay by invoking plugins on a fresh RGBA layer."""
+        from PIL import Image, ImageDraw
+        tmp = Image.new('RGBA', size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(tmp)
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_render_overlay(tmp, draw)
+                except Exception:
+                    self._log(f"[PLUGIN] rebuild_overlay error in {lp.instance.name}")
+            self._overlay_image = tmp  # atomic swap
+
+    def get_overlay(self):
+        """Return last built overlay (do not mutate)."""
+        return self._overlay_image
 
     def before_exec_payload(self, payload_name: str) -> None:
-        for lp in self._loaded:
-            try:
-                lp.instance.on_before_exec_payload(payload_name)
-            except Exception:
-                self._log(f"[PLUGIN] before_exec error in {lp.instance.name}")
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_before_exec_payload(payload_name)
+                except Exception:
+                    self._log(f"[PLUGIN] before_exec error in {lp.instance.name}")
 
     def after_exec_payload(self, payload_name: str, success: bool) -> None:
-        for lp in self._loaded:
-            try:
-                lp.instance.on_after_exec_payload(payload_name, success)
-            except Exception:
-                self._log(f"[PLUGIN] after_exec error in {lp.instance.name}")
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_after_exec_payload(payload_name, success)
+                except Exception:
+                    self._log(f"[PLUGIN] after_exec error in {lp.instance.name}")
 
     def before_scan(self, label: str, args: list[str]) -> None:
-        for lp in self._loaded:
-            try:
-                lp.instance.on_before_scan(label, args)
-            except Exception:
-                self._log(f"[PLUGIN] before_scan error in {lp.instance.name}")
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_before_scan(label, args)
+                except Exception:
+                    self._log(f"[PLUGIN] before_scan error in {lp.instance.name}")
 
     def after_scan(self, label: str, args: list[str], result_path: str) -> None:
-        for lp in self._loaded:
-            try:
-                lp.instance.on_after_scan(label, args, result_path)
-            except Exception:
-                self._log(f"[PLUGIN] after_scan error in {lp.instance.name}")
+        with self._lock:
+            for lp in self._loaded:
+                try:
+                    lp.instance.on_after_scan(label, args, result_path)
+                except Exception:
+                    self._log(f"[PLUGIN] after_scan error in {lp.instance.name}")
 
     def get_plugin_info(self, name: str) -> str:
         """Get info string from a specific plugin by name."""
