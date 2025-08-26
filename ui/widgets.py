@@ -463,12 +463,13 @@ class ColorPicker(ValuePickerWidget):
 class FileExplorer(BaseWidget):
     """Simple scrollable file/directory explorer widget."""
 
-    def show(self, start_path: str = "/", extensions: str = "") -> str:
+    def show(self, start_path: str = "/", extensions: str = "", confirm_open: bool = True) -> str:
         """Run the explorer interaction.
 
         Args:
             start_path: Initial directory path.
             extensions: Pipe-separated filter (e.g. ".txt|.log"). If empty, no filtering.
+            confirm_open: If True, ask user to confirm opening a file. If False, return immediately.
         Returns:
             Selected file path or empty string if user exits/cancels.
         """
@@ -510,7 +511,9 @@ class FileExplorer(BaseWidget):
                 if sel.endswith('/') and os.path.isdir(full_sel):
                     current_path = full_sel
                     continue
-                # It's a file candidate; confirm
+                # It's a file candidate
+                if not confirm_open:
+                    return full_sel
                 if yn_dialog(self.ctx, question="Open this file?", yes_text="Yes", no_text="No", second_line=sel[:20]):
                     return full_sel
             except Exception:
@@ -578,9 +581,13 @@ def display_scrollable_info(context: WidgetContext, lines: List[str], title: str
     """Display scrollable information text."""
     ScrollableText(context).show(lines, title=title)
 
-def explorer(context: WidgetContext, path: str = "/", extensions: str = "") -> str:
-    """Show a file explorer and return the selected file path or empty string."""
-    return FileExplorer(context).show(path, extensions)
+def explorer(context: WidgetContext, path: str = "/", extensions: str = "", confirm_open: bool = True) -> str:
+    """Show a file explorer and return the selected file path or empty string.
+
+    confirm_open controls whether a confirmation dialog is displayed before
+    returning a selected file.
+    """
+    return FileExplorer(context).show(path, extensions, confirm_open=confirm_open)
 
 def browse_images(context: WidgetContext, start_path: str = "/root/", extensions: str = ".gif|.png|.bmp|.jpg|.jpeg") -> None:
     """Convenience wrapper that creates an ImageBrowser and displays images."""

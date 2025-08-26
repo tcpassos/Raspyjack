@@ -21,7 +21,7 @@ screen stays informative throughout.
 import os, sys, time, signal, subprocess, tarfile
 from datetime import datetime
 
-sys.path.append(os.path.abspath(os.path.join(__file__, "..", "..")))
+sys.path.append(os.path.abspath(os.path.join(__file__, "..", "..", "..")))
 
 # ---------------------------- Third‑party libs ----------------------------
 import RPi.GPIO as GPIO

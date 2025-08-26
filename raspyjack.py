@@ -980,27 +980,6 @@ def quick_wifi_toggle():
     except Exception as e:
         dialog_info(_widget_context, f"Error: {str(e)[:20]}", wait=True)
 
-
-def list_payloads():
-    """
-    Returns a sorted list of available payloads from the 'payloads' directory.
-    This includes .py scripts and directories containing a 'payload.sh' file.
-    """
-    payloads = []
-    path = default.payload_path
-    if not os.path.isdir(path):
-        os.makedirs(path, exist_ok=True)
-        return []
-
-    for fname in os.listdir(path):
-        full_path = os.path.join(path, fname)
-        if fname.endswith(".py") and not fname.startswith("_") and os.path.isfile(full_path):
-            payloads.append(fname)
-        elif os.path.isdir(full_path) and 'payload.sh' in os.listdir(full_path):
-            payloads.append(fname)
-            
-    return sorted(payloads)
-
 def _setup_gpio() -> None:
     """
     Resets GPIO pins to a known state and re-initializes the LCD driver.
@@ -1016,31 +995,55 @@ def _setup_gpio() -> None:
     image = Image.new("RGB", (LCD.width, LCD.height), "BLACK")
     draw  = ImageDraw.Draw(image)
 
+def pick_and_run_payload():
+    """Open file picker rooted at payload directory to choose and run a payload.
+
+    Accepts .py files directly or directories containing a payload.sh. Filters view
+    to relevant files (.py and payload.sh) while still allowing directory descent.
+    """
+    base_path = default.payload_path
+    selected = explorer(_widget_context, base_path, extensions=".py|.sh", confirm_open=False)
+    if not selected:
+        return
+    rel = os.path.relpath(selected, base_path)
+    # Block escape attempts
+    if rel.startswith('..'):
+        dialog_info(_widget_context, "Invalid path", wait=True, center=True)
+        return
+    exec_payload(rel)
+
 def exec_payload(filename: str) -> None:
     """
     Executes a payload and ensures control always returns to the RaspyJack UI.
     """
-    full_path = os.path.join(default.payload_path, filename)
-    is_py_payload = filename.endswith('.py')
+    base = default.payload_path
+    full_path = os.path.join(base, filename)
+    run_label = filename
+    command = None
+    is_py = filename.endswith('.py')
+    is_sh = filename.endswith('.sh')
 
-    if not os.path.exists(full_path):
-        dialog_info(_widget_context, f"Payload not found:\n{filename}", wait=True)
-        return
+    if is_py:
+        if not os.path.isfile(full_path):
+            dialog_info(_widget_context, f"Not found:\n{filename}", wait=True)
+            return
+        command = [sys.executable, "-u", full_path]
+    elif is_sh:
+        if not os.path.isfile(full_path):
+            dialog_info(_widget_context, f"Not found:\n{filename}", wait=True)
+            return
+        # Use payload_executor to orchestrate arbitrary shell script
+        command = [sys.executable, "-u", os.path.join(base, "payload_executor.py"), full_path]
 
-    print(f"[PAYLOAD] ► Starting: {filename}")
+    print(f"[PAYLOAD] ► Starting: {run_label}")
     if '_plugin_manager' in globals() and _plugin_manager is not None:
-        _plugin_manager.before_exec_payload(filename)
-    
-    screen_lock.set() # Pause background threads
-    LCD.LCD_Clear()   # Provide a clean screen for the payload
+        _plugin_manager.before_exec_payload(run_label)
 
+    screen_lock.set()
+    LCD.LCD_Clear()
     log = open(default.payload_log, "ab", buffering=0)
     try:
-        # Determine the correct command to run the payload
-        command = [sys.executable, "-u", full_path] if is_py_payload else [sys.executable, "-u", os.path.join(default.payload_path, "payload_executor.py"), os.path.join(full_path, "payload.sh")]
         proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=default.install_path, text=True, bufsize=1)
-
-        # Stream payload output to logs
         if proc.stdout:
             for line in iter(proc.stdout.readline, ''):
                 print(line, end='')
@@ -1051,23 +1054,17 @@ def exec_payload(filename: str) -> None:
     finally:
         log.close()
 
-    # --- Restore RaspyJack UI ---
     print("[PAYLOAD] ◄ Restoring LCD & GPIO…")
     _setup_gpio()
-    
-    # Redraw the screen background and border
     color.draw_menu_background()
     color.draw_border()
     LCD.LCD_ShowImage(image, 0, 0)
-
-    # Debounce to prevent accidental key presses from the payload carrying over
     t0 = time.time()
     while any(GPIO.input(p) == 0 for p in gpio_config.pins.values()) and time.time() - t0 < .3:
         time.sleep(.03)
-
-    screen_lock.clear() # Resume background threads
+    screen_lock.clear()
     if '_plugin_manager' in globals() and _plugin_manager is not None:
-        _plugin_manager.after_exec_payload(filename, True)
+        _plugin_manager.after_exec_payload(run_label, True)
     print("[PAYLOAD] ✔ Menu ready.")
 
 # ============================================================================
@@ -1110,7 +1107,7 @@ class MenuManager:
             MenuItem("WiFi Manager", "wifi", icon="\uf1eb", description="Manage wireless connections"),
             MenuItem("Other features", "other", icon="\uf085", description="Additional tools and configuration"),
             MenuItem("Read file", "read_file", icon="\uf15c", description="View captured data and results"),
-            MenuItem("Payload", "payload", icon="\uf121", description="Execute custom scripts"),
+            MenuItem("Payloads", pick_and_run_payload, icon="\uf121", description="Pick & execute a payload"),
             MenuItem("Plugins", "plugins", icon="\uf12e", description="Enable/disable UI plugins"),
         ]
 
@@ -1157,10 +1154,6 @@ class MenuManager:
         else:
             self.menus["wifi"] = [MenuItem("WiFi Not Available", lambda: dialog_info(_widget_context, "WiFi system not found", wait=True))]
 
-    def _build_payload_menu(self):
-        """Dynamically builds the payload menu from files in the payload directory."""
-        payload_items = [MenuItem(os.path.splitext(p)[0], partial(exec_payload, p)) for p in list_payloads()]
-        self.menus["payload"] = payload_items or [MenuItem("<empty>", lambda: None)]
 
     def _build_plugins_menu(self):
         """Dynamically builds the plugins menu from the plugins configuration."""
@@ -1198,8 +1191,8 @@ class MenuManager:
         This is a single step in the main run loop.
         """
         # Rebuild dynamic menus just before they are displayed
-        if menu_key == "payload": self._build_payload_menu()
-        elif menu_key == "plugins": self._build_plugins_menu()
+        if menu_key == "plugins":
+            self._build_plugins_menu()
 
         items = self.menus.get(menu_key, [])
         is_main_menu = (menu_key == "main")
