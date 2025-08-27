@@ -90,8 +90,65 @@ class Plugin:
     def on_after_exec_payload(self, payload_name: str, success: bool) -> None: ...
     def on_before_scan(self, label: str, args: list[str]) -> None: ...
     def on_after_scan(self, label: str, args: list[str], result_path: str) -> None: ...
+    
     def get_info(self) -> str:
         return "No information available for this plugin."
+    
+    # --- Configuration system ---------------------------------------------
+    def get_config_schema(self) -> dict:
+        """Return configuration schema for this plugin.
+        
+        Returns a dictionary where keys are config names and values are config definitions.
+        Currently only boolean configurations are supported.
+        
+        Example:
+            {
+                "auto_start": {
+                    "type": "boolean",
+                    "label": "Auto Start on Boot",
+                    "description": "Automatically start this plugin when system boots",
+                    "default": False
+                },
+                "debug_mode": {
+                    "type": "boolean", 
+                    "label": "Debug Mode",
+                    "description": "Enable debug logging for this plugin",
+                    "default": False
+                }
+            }
+        """
+        return {}
+    
+    def get_config_value(self, key: str, default=None):
+        """Get current value of a configuration setting."""
+        if not self.config:
+            return default
+        
+        options = self.config.get('options', {})
+        if key in options:
+            return options[key]
+        
+        # Fallback to schema default if available
+        schema = self.get_config_schema()
+        if key in schema:
+            return schema[key].get('default', default)
+        
+        return default
+    
+    def set_config_value(self, key: str, value) -> None:
+        """Set a configuration value. Note: This only updates the in-memory config.
+        Use PluginManager.save_plugin_config() to persist changes."""
+        if not self.config:
+            self.config = {}
+        
+        if 'options' not in self.config:
+            self.config['options'] = {}
+        
+        self.config['options'][key] = value
+    
+    def on_config_changed(self, key: str, old_value, new_value) -> None:
+        """Called when a configuration value changes. Override to react to config changes."""
+        pass
 
 
 @dataclass
@@ -339,6 +396,48 @@ class PluginManager:
                     self._log(f"[PLUGIN] get_info error in {lp.instance.name}: {e}")
                     return "Error getting info."
         return "Plugin not loaded."
+    
+    def get_plugin_config_schema(self, name: str) -> dict:
+        """Get configuration schema for a specific plugin by name."""
+        for lp in self._loaded:
+            module_short_name = lp.module.__name__.split('.')[-1]
+            if module_short_name == name:
+                try:
+                    return lp.instance.get_config_schema()
+                except Exception as e:
+                    self._log(f"[PLUGIN] get_config_schema error in {lp.instance.name}: {e}")
+                    return {}
+        return {}
+    
+    def get_plugin_config_value(self, plugin_name: str, config_key: str, default=None):
+        """Get current configuration value for a plugin."""
+        for lp in self._loaded:
+            module_short_name = lp.module.__name__.split('.')[-1]
+            if module_short_name == plugin_name:
+                try:
+                    return lp.instance.get_config_value(config_key, default)
+                except Exception as e:
+                    self._log(f"[PLUGIN] get_config_value error in {lp.instance.name}: {e}")
+                    return default
+        return default
+    
+    def set_plugin_config_value(self, plugin_name: str, config_key: str, value) -> bool:
+        """Set configuration value for a plugin and notify of change."""
+        for lp in self._loaded:
+            module_short_name = lp.module.__name__.split('.')[-1]
+            if module_short_name == plugin_name:
+                try:
+                    old_value = lp.instance.get_config_value(config_key)
+                    lp.instance.set_config_value(config_key, value)
+                    try:
+                        lp.instance.on_config_changed(config_key, old_value, value)
+                    except Exception as e:
+                        self._log(f"[PLUGIN] on_config_changed error in {lp.instance.name}: {e}")
+                    return True
+                except Exception as e:
+                    self._log(f"[PLUGIN] set_config_value error in {lp.instance.name}: {e}")
+                    return False
+        return False
 
     # ------------------------------------------------------------------
     # Utils

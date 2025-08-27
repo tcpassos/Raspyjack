@@ -42,7 +42,22 @@ class DiscordNotifierPlugin(Plugin):
     name = "DiscordNotifier"
     priority = 200
 
+    def get_config_schema(self) -> dict:
+        """Return configuration schema for Discord plugin."""
+        return {
+            "nmap_notifications": {
+                "type": "boolean",
+                "label": "Nmap Notifications",
+                "description": "Send Discord notifications when Nmap scans complete",
+                "default": True
+            }
+        }
+
     def on_after_scan(self, label: str, args: list[str], result_path: str) -> None:
+        # Check if nmap notifications are enabled
+        if not self.get_config_value("nmap_notifications", True):
+            return
+            
         webhook_url = get_discord_webhook_url()
         if not webhook_url:
             return
@@ -60,10 +75,52 @@ class DiscordNotifierPlugin(Plugin):
         )
         thread.start()
 
+    def on_config_changed(self, key: str, old_value, new_value) -> None:
+        """React to configuration changes."""
+        if key == "nmap_notifications":
+            status = "enabled" if new_value else "disabled"
+            print(f"[DiscordNotifier] Nmap notifications {status}")
+
     def get_info(self) -> str:
-        if get_discord_webhook_url():
-            return "Discord webhook is configured."
+        webhook_url = get_discord_webhook_url()
+        if webhook_url:
+            # Extract webhook ID for display (hide token for security)
+            try:
+                webhook_parts = webhook_url.split('/')
+                webhook_id = webhook_parts[-2] if len(webhook_parts) >= 2 else "unknown"
+                masked_id = f"{webhook_id[:8]}...{webhook_id[-4:]}" if len(webhook_id) > 12 else webhook_id
+            except:
+                masked_id = "configured"
+            
+            # Get current configuration value
+            nmap_notifications = self.get_config_value("nmap_notifications", True)
+            
+            info_lines = [
+                "Discord webhook configured",
+                f"Webhook ID: {masked_id}",
+                f"Status: {'Ready' if nmap_notifications else 'Notifications disabled'}",
+                "",
+                "Current Configuration:",
+                f"• Nmap notifications: {'ON' if nmap_notifications else 'OFF'}",
+                "",
+                "Available commands:",
+                "• DISCORD_TEST - Test webhook",
+                "• DISCORD_MESSAGE - Send messages", 
+                "• DISCORD_EXFIL - Send files"
+            ]
+            return "\n".join(info_lines)
         else:
-            return "Discord webhook is NOT configured. See discord_webhook.txt."
+            info_lines = [
+                "Discord webhook NOT configured",
+                "",
+                "Setup instructions:",
+                "1. Create Discord webhook in server",
+                "2. Edit /root/Raspyjack/discord_webhook.txt",
+                "3. Add webhook URL to file",
+                "4. Restart RaspyJack",
+                "",
+                "Current status: No notifications will be sent"
+            ]
+            return "\n".join(info_lines)
 
 plugin = DiscordNotifierPlugin()

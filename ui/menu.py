@@ -39,8 +39,65 @@ class MenuItem:
         self.description = description
         self.metadata = metadata or {}
     
+    def get_display_icon(self) -> str:
+        """Get the icon to display for this item."""
+        return self.icon
+    
+    def handle_selection(self) -> Optional[Any]:
+        """Handle selection of this item. Override in subclasses."""
+        return self.action
+    
     def __str__(self) -> str:
         return self.label
+
+
+class CheckboxMenuItem(MenuItem):
+    """Specialized MenuItem that acts as a checkbox/toggle."""
+    
+    def __init__(self, 
+                 label: str,
+                 checked: bool = False,
+                 icon: str = "",
+                 description: str = "",
+                 metadata: Optional[Dict[str, Any]] = None,
+                 on_toggle: Optional[Callable[[bool], None]] = None):
+        """
+        Initialize a checkbox menu item.
+        
+        Args:
+            label: Display text for the item
+            checked: Initial checkbox state
+            icon: Icon character/code for display (fallback if no checkbox icons)
+            description: Tooltip/help text
+            metadata: Additional data for custom use
+            on_toggle: Optional callback function called when toggled with new state
+        """
+        # Don't pass action to parent - checkboxes handle their own selection
+        super().__init__(label, action=None, icon=icon, description=description, metadata=metadata)
+        self.checked = checked
+        self.on_toggle = on_toggle
+    
+    def get_display_icon(self) -> str:
+        """Get the appropriate checkbox icon."""
+        return "☑" if self.checked else "☐"
+    
+    def toggle(self) -> bool:
+        """Toggle checkbox state and return new state."""
+        self.checked = not self.checked
+        if self.on_toggle:
+            try:
+                self.on_toggle(self.checked)
+            except Exception:
+                pass  # Don't let callback errors break the toggle
+        return self.checked
+    
+    def handle_selection(self) -> bool:
+        """Handle selection by toggling the checkbox."""
+        return self.toggle()
+    
+    def set_checked(self, checked: bool) -> None:
+        """Set checkbox state without triggering callback."""
+        self.checked = checked
 
 
 class MenuRenderer(ABC):
@@ -234,11 +291,12 @@ class ListRenderer(MenuRenderer):
             
             # Draw icon if available
             x_offset = 0
-            if item.icon:
+            display_icon = item.get_display_icon()
+            if display_icon:
                 icon_font = self.ctx.fonts.get('icon')
                 render_draw.text(
                     (self.ctx.default.start_text[0] - 2, y_pos),
-                    item.icon,
+                    display_icon,
                     font=icon_font,
                     fill=text_color
                 )
@@ -402,9 +460,10 @@ class GridRenderer(MenuRenderer):
                          else self.ctx.color.text)
             
             # Draw icon
-            if item.icon:
+            display_icon = item.get_display_icon()
+            if display_icon:
                 icon_font = self.ctx.fonts.get('icon')
-                render_draw.text((x + 2, y), item.icon, font=icon_font, fill=text_color)
+                render_draw.text((x + 2, y), display_icon, font=icon_font, fill=text_color)
                 # Draw short label below icon
                 short_text = item.label[:8]
                 render_draw.text((x, y + 13), short_text, 
@@ -469,17 +528,18 @@ class CarouselRenderer(MenuRenderer):
         center_x, center_y = 64, 64  # Screen center
         
         # Draw large icon
-        if item.icon:
+        display_icon = item.get_display_icon()
+        if display_icon:
             try:
                 from PIL import ImageFont
                 large_font = ImageFont.truetype(
                     '/usr/share/fonts/truetype/fontawesome/fa-solid-900.ttf', 48)
-                render_draw.text((center_x, center_y - 12), item.icon, 
+                render_draw.text((center_x, center_y - 12), display_icon, 
                                   font=large_font, fill=self.ctx.color.selected_text, 
                                   anchor="mm")
             except:
                 # Fallback to regular font
-                render_draw.text((center_x - 10, center_y - 12), item.icon,
+                render_draw.text((center_x - 10, center_y - 12), display_icon,
                                   font=self.ctx.fonts.get('icon'),
                                   fill=self.ctx.color.selected_text)
         
@@ -616,10 +676,10 @@ class Menu:
         return None
     
     def select_current(self) -> Optional[Any]:
-        """Execute action of currently selected item."""
+        """Execute action of currently selected item or handle specialized behavior."""
         item = self.get_selected_item()
         if item:
-            return item.action
+            return item.handle_selection()
         return None
     
     def render(self, **kwargs) -> None:

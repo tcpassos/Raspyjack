@@ -75,7 +75,7 @@ Configure plugins in `plugins/plugins_conf.json`:
     "enabled": true,
     "priority": 200,
     "options": {
-      "timestamp_format": "%Y-%m-%d %H:%M:%S"
+      "nmap_notifications": true
     }
   }
 }
@@ -86,12 +86,68 @@ Configure plugins in `plugins/plugins_conf.json`:
 - **`priority`**: `number` - Execution order (lower = first)
 - **`options`**: `object` - Plugin-specific settings
 
+### Plugin Configuration Schema
+
+Plugins can expose boolean configurations that appear as checkboxes in the UI menu:
+
+```python
+class MyPlugin(Plugin):
+    def get_config_schema(self) -> dict:
+        """Define plugin configuration options for UI."""
+        return {
+            "enable_feature": {
+                "type": "boolean",
+                "label": "Enable Feature",
+                "description": "Enable this plugin feature",
+                "default": True
+            },
+            "show_notifications": {
+                "type": "boolean", 
+                "label": "Show Notifications",
+                "description": "Display notifications in UI",
+                "default": False
+            }
+        }
+    
+    def get_config_value(self, key: str, default=None):
+        """Get current configuration value."""
+        if hasattr(self, 'config') and self.config:
+            return self.config.get('options', {}).get(key, default)
+        return default
+    
+    def set_config_value(self, key: str, value) -> None:
+        """Set configuration value (handled by PluginManager)."""
+        pass
+    
+    def on_config_changed(self, key: str, old_value, new_value) -> None:
+        """Called when configuration changes via UI."""
+        print(f"[{self.name}] Config {key}: {old_value} -> {new_value}")
+```
+
+### UI Integration
+
+Configuration options automatically appear in the plugin submenu as interactive checkboxes:
+
+- **✅ Menu Integration**: Boolean configs become CheckboxMenuItem instances
+- **🔄 Real-time Updates**: Changes are immediately saved and applied
+- **💾 Persistent Storage**: Settings saved to `plugins_conf.json`
+- **🔔 Callbacks**: `on_config_changed()` called when values change
+
 ### Accessing Configuration in Plugin:
 ```python
 def on_load(self, context):
-    if self.config:
-        self.interval = self.config.get("options", {}).get("interval", 10)
-        print(f"Configured interval: {self.interval}")
+    # Use get_config_value() with defaults
+    self.interval = self.get_config_value("interval", 10)
+    self.enabled = self.get_config_value("enable_feature", True)
+    print(f"Configured interval: {self.interval}")
+
+def on_tick(self, dt):
+    # Check configuration before actions
+    if not self.get_config_value("enable_feature", True):
+        return  # Feature disabled
+    
+    # Your plugin logic here
+    pass
 ```
 
 ---
@@ -328,28 +384,184 @@ def scan_host(host, ports=[22, 80, 443]):
     return open_ports
 ```
 
-### Example 3: Plugin with Configuration
-```json
-{
-  "tools_plugin": {
-    "enabled": true,
-    "priority": 60,
-    "options": {
-      "timeout": 2,
-      "ports": [22, 80, 443, 8080],
-      "log_scans": true
-    }
-  }
-}
+### Example 3: Plugin with UI Configuration System
+```
+plugins/
+  configurable_plugin/
+    __init__.py
+    _impl.py
 ```
 
-**In plugin:**
+**`_impl.py`:**
 ```python
-def on_load(self, context):
-    opts = self.config.get("options", {})
-    self.timeout = opts.get("timeout", 1)
-    self.ports = opts.get("ports", [80, 443])
-    self.log_scans = opts.get("log_scans", False)
+from plugins.base import Plugin
+import time
+
+class ConfigurablePlugin(Plugin):
+    name = "ConfigurablePlugin"
+    priority = 50
+    
+    def __init__(self):
+        super().__init__()
+        self.counter = 0
+        self.last_notify = 0
+    
+    def get_config_schema(self) -> dict:
+        """Define UI configuration options."""
+        return {
+            "enable_monitoring": {
+                "type": "boolean",
+                "label": "Enable Monitoring",
+                "description": "Enable background monitoring",
+                "default": True
+            },
+            "show_overlay": {
+                "type": "boolean",
+                "label": "Show HUD Overlay", 
+                "description": "Display information on screen",
+                "default": True
+            },
+            "enable_notifications": {
+                "type": "boolean",
+                "label": "Enable Notifications",
+                "description": "Show status notifications",
+                "default": False
+            }
+        }
+    
+    def on_load(self, context):
+        self.context = context
+        print(f"[{self.name}] Loaded with configuration system")
+    
+    def on_tick(self, dt):
+        # Check if monitoring is enabled
+        if not self.get_config_value("enable_monitoring", True):
+            return
+        
+        self.counter += dt
+        
+        # Check if notifications are enabled
+        if self.get_config_value("enable_notifications", False):
+            if time.time() - self.last_notify > 10:  # Every 10 seconds
+                print(f"[{self.name}] Monitoring active: {self.counter:.1f}s")
+                self.last_notify = time.time()
+    
+    def on_render_overlay(self, image, draw):
+        # Check if overlay is enabled
+        if not self.get_config_value("show_overlay", True):
+            return
+        
+        if self.get_config_value("enable_monitoring", True):
+            draw.text((100, 20), f"Monitor: {self.counter:.1f}s", fill='yellow')
+    
+    def on_config_changed(self, key: str, old_value, new_value):
+        """React to configuration changes immediately."""
+        print(f"[{self.name}] Config changed: {key} = {new_value}")
+        
+        if key == "enable_monitoring":
+            if new_value:
+                print(f"[{self.name}] Monitoring enabled")
+                self.counter = 0  # Reset counter
+            else:
+                print(f"[{self.name}] Monitoring disabled")
+        
+        elif key == "show_overlay":
+            status = "enabled" if new_value else "disabled"
+            print(f"[{self.name}] HUD overlay {status}")
+        
+        elif key == "enable_notifications":
+            status = "enabled" if new_value else "disabled"
+            print(f"[{self.name}] Notifications {status}")
+    
+    def get_info(self):
+        # Show current configuration status
+        monitoring = self.get_config_value("enable_monitoring", True)
+        overlay = self.get_config_value("show_overlay", True)
+        notifications = self.get_config_value("enable_notifications", False)
+        
+        info_lines = [
+            f"Counter: {self.counter:.1f}s",
+            "",
+            "Configuration:",
+            f"• Monitoring: {'ON' if monitoring else 'OFF'}",
+            f"• HUD Overlay: {'ON' if overlay else 'OFF'}",
+            f"• Notifications: {'ON' if notifications else 'OFF'}",
+        ]
+        return "\n".join(info_lines)
+
+plugin = ConfigurablePlugin()
+```
+
+**Configuration appears automatically in menu:**
+```
+Plugins → ConfigurablePlugin →
+  ✓ Enable Plugin
+  Show Information
+  ─ Configuration ─
+  [X] Enable Monitoring      ← CheckboxMenuItem
+  [X] Show HUD Overlay       ← CheckboxMenuItem  
+  [ ] Enable Notifications   ← CheckboxMenuItem
+```
+
+### Example 4: Simplified Plugin Configurations
+
+Current included plugins use simplified, focused configurations:
+
+**Discord Plugin** (`discord_notifier_plugin`):
+```python
+def get_config_schema(self):
+    return {
+        "nmap_notifications": {
+            "type": "boolean",
+            "label": "Nmap Notifications", 
+            "description": "Send Discord notifications when Nmap scans complete",
+            "default": True
+        }
+    }
+```
+
+**Temperature Plugin** (`temperature_plugin`):
+```python
+def get_config_schema(self):
+    return {
+        "enable_display": {
+            "type": "boolean",
+            "label": "Show Temperature HUD",
+            "description": "Display temperature in corner of screen", 
+            "default": True
+        },
+        "show_unit": {
+            "type": "boolean",
+            "label": "Show Temperature Unit",
+            "description": "Display °C unit with temperature value",
+            "default": True
+        }
+    }
+```
+
+**Battery Plugin** (`battery_status_plugin`):
+```python
+def get_config_schema(self):
+    return {
+        "show_percentage": {
+            "type": "boolean",
+            "label": "Show Battery Percentage",
+            "description": "Display battery percentage in overlay",
+            "default": True
+        },
+        "show_icon": {
+            "type": "boolean", 
+            "label": "Show Battery Icon",
+            "description": "Display battery status icon",
+            "default": True
+        },
+        "enable_monitoring": {
+            "type": "boolean",
+            "label": "Enable Battery Monitoring", 
+            "description": "Monitor battery status via I2C",
+            "default": True
+        }
+    }
 ```
 
 ---
@@ -368,25 +580,81 @@ def on_load(self, context):
 - ✅ **Informative logs**: Use `print()` for debugging
 - ✅ **Spaced priorities**: Use 10, 20, 30... for easy insertions
 - ✅ **Default configuration**: Always provide default values
+- ✅ **Configuration schema**: Define clear config schemas for UI integration
+- ✅ **Boolean configs**: Use boolean types for checkbox integration
+- ✅ **Descriptive labels**: Provide user-friendly labels for config options
+- ✅ **Config validation**: Check config values before using them
+- ✅ **Change notifications**: Implement `on_config_changed()` for immediate updates
+
+### Configuration Guidelines
+- **Use clear labels**: "Enable Feature" not "feature_enabled"
+- **Provide descriptions**: Help users understand each option
+- **Sensible defaults**: Plugins should work out-of-the-box
+- **Check before use**: Always validate config values in callbacks
+- **Handle changes**: Implement `on_config_changed()` for real-time updates
+
+### Plugin Lifecycle with Configuration
+```python
+1. Plugin loaded → on_load() called
+2. Config schema retrieved → get_config_schema()
+3. UI menu built with checkboxes
+4. User toggles checkbox → on_toggle callback
+5. Config updated and saved → set_config_value()
+6. Plugin notified → on_config_changed()
+7. Plugin behavior adapts immediately
+```
 
 ---
 
 ## 📝 Included Plugins
 
 ### `battery_status_plugin`
-- **Function**: Monitor system battery
-- **HUD**: Shows percentage and status
-- **Configuration**: Check interval
+- **Function**: Monitor system battery with INA219 sensor
+- **HUD**: Shows percentage, icon, and voltage status
+- **Configuration Options**:
+  - `show_percentage`: Display battery percentage (default: true)
+  - `show_icon`: Show battery icon indicator (default: true) 
+  - `enable_monitoring`: Enable battery monitoring (default: true)
+- **Info Display**: Real-time voltage, current, and power readings
 
 ### `temperature_plugin` 
-- **Function**: Monitor CPU temperature
-- **HUD**: Visual alert if overheating
-- **Configuration**: Temperature threshold
+- **Function**: Monitor CPU temperature with thermal sensors
+- **HUD**: Temperature display in corner overlay
+- **Configuration Options**:
+  - `enable_display`: Show temperature in HUD (default: true)
+  - `show_unit`: Display °C unit with temperature (default: true)
+- **Info Display**: Current CPU temperature and sensor status
 
 ### `discord_notifier_plugin`
-- **Function**: Discord notifications for scans
+- **Function**: Send Discord notifications for completed Nmap scans
 - **Commands**: `DISCORD_MESSAGE`, `DISCORD_EXFIL`
-- **Configuration**: Webhook URL
+- **Configuration Options**:
+  - `nmap_notifications`: Send notifications when scans complete (default: true)
+- **Features**: 
+  - Automatic file attachments
+  - Embedded scan results with timestamps
+  - Webhook configuration via `discord_webhook.txt`
+  - Network interface detection
+
+### Plugin Menu Navigation
+
+Access plugin configurations through the main menu:
+
+1. **Main Menu** → **Plugins**
+2. Select plugin (shows ✓ if enabled, ✗ if disabled)
+3. **Plugin Submenu** options:
+   - `Enable/Disable Plugin` - Toggle plugin activation
+   - `Show Information` - View plugin status and details
+   - `─ Configuration ─` - Separator for config options
+   - **Checkbox Options** - Interactive boolean settings
+4. **Save & Restart** - Apply changes and reload plugins
+
+### Configuration Management
+
+- **Real-time Updates**: Checkbox changes immediately update plugin behavior
+- **Persistent Storage**: All settings saved to `plugins_conf.json`
+- **Plugin Reload**: Use "Save & Restart" to apply enable/disable changes
+- **Default Values**: Plugins provide sensible defaults for all options
 
 ---
 

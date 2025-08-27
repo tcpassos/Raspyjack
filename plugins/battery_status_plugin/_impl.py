@@ -68,6 +68,29 @@ class BatteryStatusPlugin(Plugin):
     name = "BatteryStatus"
     priority = 40
 
+    def get_config_schema(self) -> dict:
+        """Return configuration schema for Battery Status plugin."""
+        return {
+            "show_percentage": {
+                "type": "boolean",
+                "label": "Show Battery Percentage",
+                "description": "Display battery percentage text in overlay",
+                "default": True
+            },
+            "show_icon": {
+                "type": "boolean",
+                "label": "Show Battery Icon",
+                "description": "Display battery icon graphic in overlay", 
+                "default": True
+            },
+            "enable_monitoring": {
+                "type": "boolean",
+                "label": "Enable Battery Monitoring",
+                "description": "Enable battery status monitoring and overlay display",
+                "default": True
+            }
+        }
+
     def on_load(self, ctx: dict) -> None:
         self.ctx = ctx
         opts = getattr(self, 'options', {}) or {}
@@ -87,7 +110,7 @@ class BatteryStatusPlugin(Plugin):
             self.sensor = None
 
     def on_tick(self, dt: float) -> None:
-        if not self.ok or self.sensor is None:
+        if not self.ok or self.sensor is None or not self.get_config_value("enable_monitoring", True):
             return
         now = time.time()
         if now - self._last_poll < self.refresh_interval:
@@ -103,30 +126,108 @@ class BatteryStatusPlugin(Plugin):
             self.percent = None
 
     def on_render_overlay(self, image, draw) -> None:
-        if self.percent is None:
+        if (self.percent is None or 
+            not self.get_config_value("enable_monitoring", True) or 
+            (not self.get_config_value("show_percentage", True) and not self.get_config_value("show_icon", True))):
             return
+            
         try:
             if 'status_bar' in getattr(self, 'ctx', {}) and self.ctx['status_bar'].is_busy():
                 return
         except Exception:
             pass
+            
         w, h = image.size
-        icon_w = 18
-        icon_h = 8
-        x2 = w - 4
-        x1 = x2 - icon_w
-        y1 = 0
-        y2 = y1 + icon_h
-        draw.rectangle((x1, y1, x2 - 3, y2), outline="white", fill=None)
-        draw.rectangle((x2 - 3, y1 + 2, x2, y2 - 2), outline="white", fill="white")
-        inner_w = icon_w - 6
-        fill_w = int(inner_w * (self.percent / 100.0))
-        if fill_w > 0:
-            draw.rectangle((x1 + 2, y1 + 2, x1 + 2 + fill_w, y2 - 2), fill="white")
-        pct_text = f"{int(self.percent):02d}%"
-        text_x = x1 - 3 - (len(pct_text) * 5)
-        if text_x < 0:
-            text_x = 0
-        draw.text((text_x, y1), pct_text, fill="white")
+        
+        # Show battery icon if enabled
+        if self.get_config_value("show_icon", True):
+            icon_w = 18
+            icon_h = 8
+            x2 = w - 4
+            x1 = x2 - icon_w
+            y1 = 0
+            y2 = y1 + icon_h
+            draw.rectangle((x1, y1, x2 - 3, y2), outline="white", fill=None)
+            draw.rectangle((x2 - 3, y1 + 2, x2, y2 - 2), outline="white", fill="white")
+            inner_w = icon_w - 6
+            fill_w = int(inner_w * (self.percent / 100.0))
+            if fill_w > 0:
+                draw.rectangle((x1 + 2, y1 + 2, x1 + 2 + fill_w, y2 - 2), fill="white")
+            
+            # Show percentage text if enabled
+            if self.get_config_value("show_percentage", True):
+                pct_text = f"{int(self.percent):02d}%"
+                text_x = x1 - 3 - (len(pct_text) * 5)
+                if text_x < 0:
+                    text_x = 0
+                draw.text((text_x, y1), pct_text, fill="white")
+        elif self.get_config_value("show_percentage", True):
+            # Show only percentage text (no icon)
+            pct_text = f"{int(self.percent):02d}%"
+            text_x = w - 30
+            draw.text((text_x, 0), pct_text, fill="white")
+
+    def on_config_changed(self, key: str, old_value, new_value) -> None:
+        """React to configuration changes."""
+        if key == "enable_monitoring":
+            status = "enabled" if new_value else "disabled"
+            print(f"[{self.name}] Battery monitoring {status}")
+        elif key == "show_percentage":
+            status = "enabled" if new_value else "disabled"
+            print(f"[{self.name}] Percentage display {status}")
+        elif key == "show_icon":
+            status = "enabled" if new_value else "disabled"
+            print(f"[{self.name}] Icon display {status}")
+    
+    def get_info(self) -> str:
+        if not self.ok or self.sensor is None:
+            info_lines = [
+                "Battery monitoring unavailable",
+                f"I2C Bus: {self.bus_num}",
+                f"Address: 0x{self.addr:02X}",
+                "Status: Sensor not found",
+                "",
+                "Requirements:",
+                "• INA219 current sensor",
+                "• I2C connection",
+                "• smbus Python library"
+            ]
+            return "\n".join(info_lines)
+        
+        try:
+            voltage = self.sensor.bus_voltage()
+            current = self.sensor.current_a()
+            power = self.sensor.power_w()
+            shunt_v = self.sensor.shunt_voltage()
+        except Exception as e:
+            voltage = current = power = shunt_v = 0.0
+        
+        # Get current configuration
+        enable_monitoring = self.get_config_value("enable_monitoring", True)
+        show_percentage = self.get_config_value("show_percentage", True)
+        show_icon = self.get_config_value("show_icon", True)
+        
+        info_lines = [
+            f"Battery Level: {self.percent:.1f}%" if self.percent is not None else "Battery Level: Reading...",
+            f"Bus Voltage: {voltage:.3f}V",
+            f"Current: {current:.3f}A",
+            f"Power: {power:.3f}W",
+            f"Shunt Voltage: {shunt_v:.3f}V",
+            "",
+            "Current Configuration:",
+            f"• Monitoring: {'ON' if enable_monitoring else 'OFF'}",
+            f"• Show Percentage: {'ON' if show_percentage else 'OFF'}",
+            f"• Show Icon: {'ON' if show_icon else 'OFF'}",
+            "",
+            "Hardware Configuration:",
+            f"I2C Address: 0x{self.addr:02X}",
+            f"I2C Bus: {self.bus_num}",
+            f"Refresh Rate: {self.refresh_interval}s",
+            f"Voltage Range: {self.v_min}V - {self.v_max}V",
+            "",
+            f"Sensor Status: {'Active' if self.ok else 'Error'}",
+            f"Last Update: {time.strftime('%H:%M:%S', time.localtime(self._last_poll))}"
+        ]
+        return "\n".join(info_lines)
 
 plugin = BatteryStatusPlugin()

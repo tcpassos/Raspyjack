@@ -25,7 +25,7 @@ from ui.widgets import (
 )
 from ui.status_bar import StatusBar
 from ui.color_scheme import ColorScheme
-from ui.menu import Menu, MenuItem, ListRenderer, GridRenderer, CarouselRenderer
+from ui.menu import Menu, MenuItem, CheckboxMenuItem, ListRenderer, GridRenderer, CarouselRenderer
 from ui.framebuffer import fb
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
@@ -1108,7 +1108,7 @@ class MenuManager:
             MenuItem("Other features", "other", icon="\uf085", description="Additional tools and configuration"),
             MenuItem("Read file", "read_file", icon="\uf15c", description="View captured data and results"),
             MenuItem("Payloads", pick_and_run_payload, icon="\uf121", description="Pick & execute a payload"),
-            MenuItem("Plugins", "plugins", icon="\uf12e", description="Enable/disable UI plugins"),
+            MenuItem("Plugins", "plugins", icon="\uf12e", description="Manage UI plugins"),
         ]
 
         # --- Submenus ---
@@ -1159,20 +1159,111 @@ class MenuManager:
         """Dynamically builds the plugins menu from the plugins configuration."""
         cfg = load_plugins_conf()
         entries = []
-        def _make_toggle(pname):
-            def _toggle():
-                c = load_plugins_conf()
-                c[pname]['enabled'] = not bool(c.get(pname, {}).get('enabled'))
-                save_plugins_conf(c)
-                self._build_plugins_menu()
-                # Force a refresh of the current menu view
-                self.show_menu("plugins", force_refresh=True)
-            return _toggle
+        
+        # Create main plugin entries that lead to submenus
         for name in sorted(cfg.keys()):
-            label = f"[{'x' if cfg[name].get('enabled') else ' '}] {name}"
-            entries.append(MenuItem(label, _make_toggle(name)))
+            enabled = cfg[name].get('enabled', False)
+            status_icon = "✓" if enabled else "✗"
+            label = f"{status_icon} {name}"
+            entries.append(MenuItem(label, f"plugin_{name}"))
+        
+        # Add general options
         entries.append(MenuItem("Save & Restart", lambda: (dialog_info(_widget_context, "Restarting UI...", wait=True), time.sleep(0.5), restart_ui())))
+        
         self.menus["plugins"] = entries or [MenuItem("<no plugins>", lambda: None)]
+        
+        # Build submenus for each plugin
+        self._build_plugin_submenus(cfg)
+    
+    def _build_plugin_submenus(self, cfg):
+        """Build individual submenus for each plugin."""
+        for plugin_name in cfg.keys():
+            submenu_key = f"plugin_{plugin_name}"
+            enabled = cfg[plugin_name].get('enabled', False)
+            
+            def _make_toggle(pname):
+                def _toggle():
+                    c = load_plugins_conf()
+                    current_state = c.get(pname, {}).get('enabled', False)
+                    c[pname]['enabled'] = not current_state
+                    save_plugins_conf(c)
+                    # Rebuild the plugin menu to reflect changes
+                    self._build_plugins_menu()
+                    status = 'Enabled' if not current_state else 'Disabled'
+                    dialog_info(_widget_context, 
+                              f"Plugin {pname}\n{status}\n\nSave & Restart to\napply changes!", 
+                              wait=True, center=True)
+                return _toggle
+            
+            def _make_info_viewer(pname):
+                def _show_info():
+                    try:
+                        if '_plugin_manager' in globals() and _plugin_manager is not None:
+                            info = _plugin_manager.get_plugin_info(pname)
+                            if info:
+                                lines = info.split('\n') if '\n' in info else [info]
+                                display_scrollable_info(_widget_context, lines, title=f"{pname} Info")
+                            else:
+                                dialog_info(_widget_context, f"No info available\nfor {pname}", wait=True)
+                        else:
+                            dialog_info(_widget_context, "Plugin manager\nnot available", wait=True)
+                    except Exception as e:
+                        dialog_info(_widget_context, f"Error getting info\n{str(e)[:20]}", wait=True)
+                return _show_info
+            
+            def _make_config_toggle(pname, config_key):
+                def _config_toggle_callback(new_state):
+                    """Callback fired when checkbox is toggled."""
+                    try:
+                        # Update plugin manager
+                        if '_plugin_manager' in globals() and _plugin_manager is not None:
+                            _plugin_manager.set_plugin_config_value(pname, config_key, new_state)
+                        
+                        # Update and save persistent config
+                        c = load_plugins_conf()
+                        if pname not in c:
+                            c[pname] = {}
+                        if 'options' not in c[pname]:
+                            c[pname]['options'] = {}
+                        c[pname]['options'][config_key] = new_state
+                        save_plugins_conf(c)
+                    except Exception as e:
+                        print(f"[PLUGIN] Config update error for {pname}.{config_key}: {e}")
+                
+                return _config_toggle_callback
+            
+            # Create submenu for this plugin
+            toggle_text = "Disable" if enabled else "Enable"
+            submenu_items = [
+                MenuItem(f"{toggle_text} Plugin", _make_toggle(plugin_name)),
+                MenuItem("Show Information", _make_info_viewer(plugin_name)),
+            ]
+            
+            # Add plugin-specific configuration items if plugin is loaded and has configs
+            try:
+                if '_plugin_manager' in globals() and _plugin_manager is not None and enabled:
+                    config_schema = _plugin_manager.get_plugin_config_schema(plugin_name)
+                    if config_schema:
+                        # Add separator if we have configs
+                        submenu_items.append(MenuItem("─ Configuration ─", action=None))
+                        
+                        for config_key, config_def in config_schema.items():
+                            if config_def.get('type') == 'boolean':
+                                # Get current value from persistent config or default
+                                current_value = cfg[plugin_name].get('options', {}).get(
+                                    config_key, config_def.get('default', False))
+                                
+                                # Create checkbox with callback
+                                config_checkbox = CheckboxMenuItem(
+                                    config_def.get('label', config_key),
+                                    checked=current_value,
+                                    on_toggle=_make_config_toggle(plugin_name, config_key)
+                                )
+                                submenu_items.append(config_checkbox)
+            except Exception as e:
+                print(f"[PLUGIN] Error building config menu for {plugin_name}: {e}")
+            
+            self.menus[submenu_key] = submenu_items
 
     def toggle_view_mode(self):
         """Cycles through the available view modes for the main menu."""

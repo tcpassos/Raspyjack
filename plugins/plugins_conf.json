@@ -1,5 +1,5 @@
 {
-   "temperature_plugin": {
+  "temperature_plugin": {
     "enabled": true,
     "priority": 30,
     "options": {
