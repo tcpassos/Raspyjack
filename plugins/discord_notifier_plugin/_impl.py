@@ -104,7 +104,6 @@ class DiscordNotifierPlugin(Plugin):
                 f"• Nmap notifications: {'ON' if nmap_notifications else 'OFF'}",
                 "",
                 "Available commands:",
-                "• DISCORD_TEST - Test webhook",
                 "• DISCORD_MESSAGE - Send messages", 
                 "• DISCORD_EXFIL - Send files"
             ]
