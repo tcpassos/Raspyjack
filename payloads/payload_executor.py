@@ -117,6 +117,9 @@ class PayloadOrchestrator:
             payload_env = os.environ.copy()
             payload_env["PATH"] = f"{COMMANDS_PATH}:{payload_env.get('PATH', '')}"
             payload_env["LOOT_DIR"] = LOOT_PATH
+            # Add project root to PYTHONPATH so scripts can import project modules
+            project_root = os.path.abspath(os.path.join(__file__, '..', '..'))
+            payload_env["PYTHONPATH"] = f"{project_root}:{payload_env.get('PYTHONPATH', '')}"
 
             # Ensure GPIO for abort + macro keys configured (input w/ pull-up)
             try:

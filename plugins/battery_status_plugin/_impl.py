@@ -1,23 +1,3 @@
-"""Battery status overlay plugin for Waveshare UPS HAT (C).
-
-Reads INA219 over I2C and renders a tiny battery icon + percentage in the
-upper‑right corner without disturbing the existing status line.
-
-Configuration example (plugins_conf.json):
-{
-  "battery_status_plugin": {
-    "enabled": true,
-    "priority": 40,
-    "options": {
-      "i2c_bus": 1,
-      "address": 0x43,
-      "refresh_interval": 2.0,      # seconds between sensor polls
-      "voltage_min": 3.0,           # 0% reference (V)
-      "voltage_max": 4.2            # 100% reference (V)
-    }
-  }
-}
-"""
 from __future__ import annotations
 import time
 
@@ -26,9 +6,8 @@ try:
 except Exception:  # Allow running without I2C libs
     smbus = None
 
-from .base import Plugin
+from plugins.base import Plugin
 
-# INA219 registers / constants (subset needed)
 _REG_CONFIG       = 0x00
 _REG_SHUNTVOLTAGE = 0x01
 _REG_BUSVOLTAGE   = 0x02
@@ -37,7 +16,6 @@ _REG_CURRENT      = 0x04
 _REG_CALIBRATION  = 0x05
 
 class _INA219:
-    """Minimal INA219 helper (only what we need)."""
     def __init__(self, i2c_bus: int = 1, addr: int = 0x43):
         if smbus is None:
             raise RuntimeError("smbus not available")
@@ -56,15 +34,12 @@ class _INA219:
         return (data[0] << 8) | data[1]
 
     def _configure(self):
-        # Write calibration then config (values copied from reference code)
         self._write(_REG_CALIBRATION, self._cal_value)
-        # Config bitfield assembled same as reference (16V, gain /2, 12bit x32 samples both, continuous)
         config = (0x00 << 13) | (0x01 << 11) | (0x0D << 7) | (0x0D << 3) | 0x07
         self._write(_REG_CONFIG, config)
 
     def bus_voltage(self) -> float:
         self._write(_REG_CALIBRATION, self._cal_value)
-        # discard first read then convert
         _ = self._read16(_REG_BUSVOLTAGE)
         value = self._read16(_REG_BUSVOLTAGE)
         return (value >> 3) * 0.004
@@ -74,7 +49,7 @@ class _INA219:
         value = self._read16(_REG_SHUNTVOLTAGE)
         if value > 32767:
             value -= 65535
-        return value * 0.00001  # 0.01mV -> V
+        return value * 0.00001
 
     def current_a(self) -> float:
         value = self._read16(_REG_CURRENT)
@@ -91,7 +66,7 @@ class _INA219:
 
 class BatteryStatusPlugin(Plugin):
     name = "BatteryStatus"
-    priority = 40  # draw before clock (which was 50)
+    priority = 40
 
     def on_load(self, ctx: dict) -> None:
         self.ctx = ctx
@@ -119,7 +94,7 @@ class BatteryStatusPlugin(Plugin):
             return
         self._last_poll = now
         try:
-            v = self.sensor.bus_voltage()  # load voltage
+            v = self.sensor.bus_voltage()
             pct = (v - self.v_min) / (self.v_max - self.v_min) * 100.0
             pct = max(0.0, min(100.0, pct))
             self.percent = pct
@@ -128,33 +103,26 @@ class BatteryStatusPlugin(Plugin):
             self.percent = None
 
     def on_render_overlay(self, image, draw) -> None:
-        # Skip if we don't yet have a reading
         if self.percent is None:
             return
-        # Skip if status bar already showing a message (avoid clutter)
         try:
             if 'status_bar' in getattr(self, 'ctx', {}) and self.ctx['status_bar'].is_busy():
                 return
         except Exception:
             pass
         w, h = image.size
-        # Battery icon dimensions
         icon_w = 18
         icon_h = 8
         x2 = w - 4
         x1 = x2 - icon_w
         y1 = 0
         y2 = y1 + icon_h
-        # Outline
         draw.rectangle((x1, y1, x2 - 3, y2), outline="white", fill=None)
-        # Tip
         draw.rectangle((x2 - 3, y1 + 2, x2, y2 - 2), outline="white", fill="white")
-        # Fill level
         inner_w = icon_w - 6
         fill_w = int(inner_w * (self.percent / 100.0))
         if fill_w > 0:
             draw.rectangle((x1 + 2, y1 + 2, x1 + 2 + fill_w, y2 - 2), fill="white")
-        # Percentage text (small, right-aligned above or below)
         pct_text = f"{int(self.percent):02d}%"
         text_x = x1 - 3 - (len(pct_text) * 5)
         if text_x < 0:

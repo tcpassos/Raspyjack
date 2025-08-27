@@ -39,10 +39,26 @@ Life‑cycle / callback methods (all optional):
         wrapper, not inside the payload itself necessarily).
 
 Design goals:
-- Simple, single file plugin possible.
+- Canonical package layout per plugin:
+
+        plugins/
+            my_plugin/
+                __init__.py        # must expose `plugin` instance or Plugin subclass
+                bin/                # optional: executable scripts to be exposed
+                    MY_COMMAND      # becomes available under top-level bin/
+                helpers/            # optional support modules imported by __init__
+                ...
+
 - Safe: all callbacks are wrapped in try/except so one misbehaving plugin
   does not break the main UI.
 - Order: plugins have a `priority` (lower runs first for each dispatch).
+
+Per-plugin bin exposure:
+If a plugin package contains a `bin` directory, its executable files are
+mirrored into the root `bin` directory (without overwriting existing files).
+We attempt to create a small shim wrapper when running on non-Unix systems or
+if symlinks are not permitted. This allows payloads to invoke plugin-provided
+commands uniformly.
 """
 from __future__ import annotations
 
@@ -52,6 +68,8 @@ import time
 import traceback
 from types import ModuleType
 from typing import List, Sequence
+import os
+import shutil
 
 
 class Plugin:
@@ -209,6 +227,11 @@ class PluginManager:
                     continue
 
                 self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
+                # After successful load, expose bin tools if present
+                try:
+                    self._expose_plugin_bin(mod)
+                except Exception as e:
+                    self._log(f"[PLUGIN] bin expose error for {module_name}: {e}")
 
             self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
             if self.verbose:
@@ -323,6 +346,82 @@ class PluginManager:
     def _log(self, msg: str) -> None:
         if self.verbose:
             print(msg)
+
+    # ------------------------------------------------------------------
+    # Bin exposure helpers
+    # ------------------------------------------------------------------
+    def _expose_plugin_bin(self, module: ModuleType) -> None:
+        """Expose executables from a plugin's bin/ directory into top-level bin/.
+            - Detect plugin package path via module.__file__.
+            - Look for sibling 'bin' directory.
+            - For each entry (file) without extension (or any executable), create
+            a symlink under project_root/bin if possible; otherwise create a
+            small wrapper script that calls the source file with Python or shell.
+            - Never overwrite existing targets; log and skip collisions.
+        """
+        mod_file = getattr(module, '__file__', None)
+        if not mod_file:
+            return
+        plugin_dir = os.path.dirname(mod_file)
+        bin_dir = os.path.join(plugin_dir, 'bin')
+        if not os.path.isdir(bin_dir):
+            return
+        # project root assumed two levels up from plugins package file path
+        # e.g., /path/Raspyjack/plugins/my_plugin/__init__.py
+        project_root = plugin_dir
+        while project_root and os.path.basename(project_root) != 'Raspyjack' and os.path.dirname(project_root) != project_root:
+            project_root = os.path.dirname(project_root)
+        top_bin = os.path.join(project_root, 'bin')
+        if not os.path.isdir(top_bin):
+            try:
+                os.makedirs(top_bin, exist_ok=True)
+            except Exception:
+                return
+        for name in os.listdir(bin_dir):
+            src_path = os.path.join(bin_dir, name)
+            if os.path.isdir(src_path):
+                continue
+            dest_path = os.path.join(top_bin, name)
+            if os.path.exists(dest_path):
+                # Do not overwrite existing global command
+                continue
+            
+            # Ensure source file has execute permissions first
+            try:
+                os.chmod(src_path, 0o755)
+            except Exception:
+                pass
+            
+            try:
+                # Try symlink first
+                os.symlink(src_path, dest_path)
+                self._log(f"[PLUGIN] Created symlink: bin/{name} -> {src_path}")
+                # For symlinks, also ensure destination has correct permissions
+                try:
+                    os.chmod(dest_path, 0o755)
+                except Exception:
+                    pass
+            except Exception:
+                # Fallback: copy or create wrapper
+                try:
+                    shutil.copy2(src_path, dest_path)
+                    self._log(f"[PLUGIN] Copied executable: bin/{name} from {src_path}")
+                    # Ensure copied file has execute permissions
+                    try:
+                        os.chmod(dest_path, 0o755)
+                    except Exception:
+                        pass
+                except Exception:
+                    # Last resort: create python wrapper if src is .py
+                    if src_path.endswith('.py'):
+                        with open(dest_path, 'w', encoding='utf-8') as f:
+                            f.write('#!/usr/bin/env python3\n')
+                            f.write(f"import runpy, sys; sys.path.insert(0, '{plugin_dir}'); runpy.run_path('{src_path}', run_name='__main__')\n")
+                        self._log(f"[PLUGIN] Created Python wrapper: bin/{name} for {src_path}")
+                        try:
+                            os.chmod(dest_path, 0o755)
+                        except Exception:
+                            pass
 
     @property
     def plugins(self) -> List[Plugin]:

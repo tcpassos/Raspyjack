@@ -11,7 +11,6 @@ import time
 import threading
 from abc import ABC, abstractmethod
 from .widgets import WidgetContext
-from PIL import ImageDraw
 from ui.framebuffer import fb
 
 

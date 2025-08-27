@@ -1,17 +1,5 @@
 {
-  "example_plugin": {
-    "enabled": false,
-    "priority": 50,
-    "options": {
-      "show_seconds": false,
-      "text_color": "white"
-    }
-  },
-  "battery_status_plugin": {
-    "enabled": false,
-    "priority": 40
-  },
-  "temperature_plugin": {
+   "temperature_plugin": {
     "enabled": true,
     "priority": 30,
     "options": {
@@ -19,6 +7,10 @@
       "text_color": "white",
       "show_unit": true
     }
+  },
+  "battery_status_plugin": {
+    "enabled": false,
+    "priority": 40
   },
   "discord_notifier_plugin": {
     "enabled": true,
