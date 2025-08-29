@@ -315,37 +315,18 @@ def load_config():
             GPIO.setup(pin_number, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     print("Config loaded!")
 
-# ---------------- Plugin enable/disable menu -----------------------------
-def _plugins_config_path():
-    return os.path.join(default.install_path, 'plugins', 'plugins_conf.json')
-
-def load_plugins_conf():
-    try:
-        with open(_plugins_config_path(), 'r') as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def save_plugins_conf(cfg: dict):
-    try:
-        os.makedirs(os.path.dirname(_plugins_config_path()), exist_ok=True)
-        with open(_plugins_config_path(), 'w') as f:
-            json.dump(cfg, f, indent=2)
-    except Exception as e:
-        print(f"[PLUGIN] Failed saving plugins_conf: {e}")
+from plugins.runtime import (
+    load_plugins_conf as _rt_load_plugins_conf,
+    save_plugins_conf as _rt_save_plugins_conf,
+    reload_plugins as _rt_reload_plugins,
+    plugin_tick_loop as _rt_plugin_tick_loop,
+)
 
 def reload_plugins():
+    """Reload plugins using runtime helper."""
     global _plugin_manager
     if 'PluginManager' not in globals() or PluginManager is None:
         return
-    cfg = load_plugins_conf()
-    if _plugin_manager is None:
-        _plugin_manager = PluginManager()
-    else:
-        try:
-            _plugin_manager.unload_all()
-        except Exception:
-            pass
     ctx = {
         'exec_payload': lambda name: exec_payload(name),
         'is_responder_running': is_responder_running,
@@ -354,11 +335,7 @@ def reload_plugins():
         'draw_obj': lambda: draw,
         'status_bar': status_bar,
     }
-    if hasattr(_plugin_manager, 'load_from_config'):
-        _plugin_manager.load_from_config(cfg, ctx)
-    else:
-        names = [k for k, v in cfg.items() if isinstance(v, dict) and v.get('enabled')]
-        _plugin_manager.load_all(names, ctx)
+    _plugin_manager = _rt_reload_plugins(_plugin_manager, default.install_path, ctx)
 
 ####### Drawing functions #######
 
@@ -1157,21 +1134,21 @@ class MenuManager:
 
     def _build_plugins_menu(self):
         """Dynamically builds the plugins menu from the plugins configuration."""
-        cfg = load_plugins_conf()
+        cfg = _rt_load_plugins_conf(default.install_path)
         entries = []
-        
+
         # Create main plugin entries that lead to submenus
         for name in sorted(cfg.keys()):
             enabled = cfg[name].get('enabled', False)
             status_icon = "✓" if enabled else "✗"
             label = f"{status_icon} {name}"
             entries.append(MenuItem(label, f"plugin_{name}"))
-        
+
         # Add general options
         entries.append(MenuItem("Save & Restart", lambda: (dialog_info(_widget_context, "Restarting UI...", wait=True), time.sleep(0.5), restart_ui())))
-        
+
         self.menus["plugins"] = entries or [MenuItem("<no plugins>", lambda: None)]
-        
+
         # Build submenus for each plugin
         self._build_plugin_submenus(cfg)
     
@@ -1183,10 +1160,10 @@ class MenuManager:
             
             def _make_toggle(pname):
                 def _toggle():
-                    c = load_plugins_conf()
+                    c = _rt_load_plugins_conf(default.install_path)
                     current_state = c.get(pname, {}).get('enabled', False)
                     c[pname]['enabled'] = not current_state
-                    save_plugins_conf(c)
+                    _rt_save_plugins_conf(c, default.install_path)
                     # Rebuild the plugin menu to reflect changes
                     self._build_plugins_menu()
                     status = 'Enabled' if not current_state else 'Disabled'
@@ -1220,13 +1197,13 @@ class MenuManager:
                             _plugin_manager.set_plugin_config_value(pname, config_key, new_state)
                         
                         # Update and save persistent config
-                        c = load_plugins_conf()
+                        c = _rt_load_plugins_conf(default.install_path)
                         if pname not in c:
                             c[pname] = {}
                         if 'options' not in c[pname]:
                             c[pname]['options'] = {}
                         c[pname]['options'][config_key] = new_state
-                        save_plugins_conf(c)
+                        _rt_save_plugins_conf(c, default.install_path)
                     except Exception as e:
                         print(f"[PLUGIN] Config update error for {pname}.{config_key}: {e}")
                 
@@ -1368,7 +1345,7 @@ if 'PluginManager' in globals() and PluginManager is not None:
         plugins_cfg_path = os.path.join(default.install_path, 'plugins', 'plugins_conf.json')
         if not os.path.exists(plugins_cfg_path):
             print("[PLUGIN] Creating default plugins_conf.json")
-            save_plugins_conf({})
+            _rt_save_plugins_conf({}, default.install_path)
         reload_plugins()
     except Exception as e:
         print(f"[PLUGIN] Error during plugin bootstrap: {e}")
