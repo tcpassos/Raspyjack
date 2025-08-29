@@ -13,6 +13,10 @@ import os
 import time
 import importlib
 from typing import Dict, Any, Optional
+import shutil
+import zipfile
+import tarfile
+
 
 from .base import PluginManager, Plugin  # Re-use existing abstractions
 
@@ -98,6 +102,128 @@ def load_plugins_conf(install_path: str) -> Dict[str, Any]:
         save_plugins_conf(cfg, install_path)
     return cfg
 
+# ----------------------------------------------------------------------------
+# Archive installation (auto-install new plugin packages)
+# ----------------------------------------------------------------------------
+
+SUPPORTED_ARCHIVES = ('.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2')
+
+def _safe_extract_tar(tar: tarfile.TarFile, path: str) -> None:
+    """Extract tar file safely, preventing path traversal."""
+    for member in tar.getmembers():
+        member_path = os.path.join(path, member.name)
+        abs_target = os.path.abspath(member_path)
+        abs_base = os.path.abspath(path)
+        if not abs_target.startswith(abs_base):
+            raise RuntimeError(f"Unsafe path in archive: {member.name}")
+    tar.extractall(path)
+
+def _safe_extract_zip(zf: zipfile.ZipFile, path: str) -> None:
+    for member in zf.infolist():
+        member_path = os.path.join(path, member.filename)
+        abs_target = os.path.abspath(member_path)
+        abs_base = os.path.abspath(path)
+        if not abs_target.startswith(abs_base):
+            raise RuntimeError(f"Unsafe path in archive: {member.filename}")
+    zf.extractall(path)
+
+def install_pending_plugin_archives(install_path: str, move_processed: bool = True) -> list[str]:
+    """Install any plugin archives dropped into plugins/install.
+
+    Process:
+      1. Look in <install_path>/plugins/install for supported archive files.
+      2. Extract each archive into a temporary directory.
+      3. Detect the top-level plugin folder (must contain __init__.py or _impl.py and not be 'base').
+      4. Move the folder into plugins/ (skip if already exists -> rename with _new or skip).
+      5. Move or rename processed archive to 'processed' subfolder or append .done.
+      6. Return list of installed plugin names.
+
+    Supports .zip and common tar formats.
+    """
+    install_root = os.path.join(install_path, 'plugins', 'install')
+    if not os.path.isdir(install_root):
+        return []
+
+    processed_dir = os.path.join(install_root, 'processed')
+    os.makedirs(processed_dir, exist_ok=True)
+
+    installed: list[str] = []
+    for fname in os.listdir(install_root):
+        if fname.startswith('.'):
+            continue
+        full = os.path.join(install_root, fname)
+        if os.path.isdir(full):
+            continue
+        lower = fname.lower()
+        if not lower.endswith(SUPPORTED_ARCHIVES):
+            continue
+        try:
+            tmp_extract_base = os.path.join(install_root, '_tmp_extract')
+            if os.path.isdir(tmp_extract_base):
+                shutil.rmtree(tmp_extract_base, ignore_errors=True)
+            os.makedirs(tmp_extract_base, exist_ok=True)
+
+            # Extract
+            if lower.endswith('.zip'):
+                with zipfile.ZipFile(full, 'r') as zf:
+                    _safe_extract_zip(zf, tmp_extract_base)
+            else:
+                # Tar variants
+                with tarfile.open(full, 'r:*') as tf:
+                    _safe_extract_tar(tf, tmp_extract_base)
+
+            # Determine plugin directory: find first dir containing __init__.py
+            plugin_dir_name = None
+            for root, dirs, files in os.walk(tmp_extract_base):
+                if '__init__.py' in files:
+                    cand = os.path.basename(root)
+                    if cand not in ('base', '__pycache__'):
+                        plugin_dir_name = cand
+                        source_dir = root
+                        break
+            if not plugin_dir_name:
+                print(f"[PLUGIN] Archive '{fname}' skipped: no plugin package found")
+                # Archive processed anyway to avoid infinite loop
+                dest_final = os.path.join(processed_dir, fname + '.invalid')
+                shutil.move(full, dest_final)
+                continue
+
+            dest_dir = os.path.join(install_path, 'plugins', plugin_dir_name)
+            if os.path.exists(dest_dir):
+                # Decide rename strategy
+                alt_dir = dest_dir + '_new'
+                counter = 1
+                while os.path.exists(alt_dir):
+                    counter += 1
+                    alt_dir = f"{dest_dir}_new{counter}"
+                dest_dir = alt_dir
+            shutil.move(source_dir, dest_dir)
+            print(f"[PLUGIN] Installed plugin '{plugin_dir_name}' from '{fname}' -> {os.path.basename(dest_dir)}")
+            installed.append(os.path.basename(dest_dir))
+
+            # Mark archive as processed
+            if move_processed:
+                dest_final = os.path.join(processed_dir, fname + '.done')
+                try:
+                    shutil.move(full, dest_final)
+                except Exception:
+                    os.rename(full, full + '.done')
+            else:
+                os.rename(full, full + '.done')
+        except Exception as e:
+            print(f"[PLUGIN] Failed installing archive '{fname}': {e}")
+            try:
+                os.rename(full, full + '.error')
+            except Exception:
+                pass
+        finally:
+            try:
+                if os.path.isdir(os.path.join(install_root, '_tmp_extract')):
+                    shutil.rmtree(os.path.join(install_root, '_tmp_extract'), ignore_errors=True)
+            except Exception:
+                pass
+    return installed
+
 
 def save_plugins_conf(cfg: Dict[str, Any], install_path: str) -> None:
     """Persist plugin configuration to disk."""
@@ -162,5 +288,5 @@ def plugin_tick_loop(manager_ref_provider, stop_event, interval: float = 0.5) ->
         time.sleep(interval)
 
 __all__ = [
-    'load_plugins_conf', 'save_plugins_conf', 'reload_plugins', 'plugin_tick_loop'
+    'load_plugins_conf', 'save_plugins_conf', 'reload_plugins', 'plugin_tick_loop', 'install_pending_plugin_archives'
 ]

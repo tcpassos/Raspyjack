@@ -3,7 +3,9 @@
 Modular plugin system for RaspyJack that allows adding functionality without modifying the main code.
 
 ## 📋 Table of Contents
+- [Installation](#-installation)
 - [Plugin Structure](#-plugin-structure)
+- [Plugin Template](#-plugin-template)
 - [Configuration](#-configuration)
 - [Available Callbacks](#-available-callbacks)
 - [Context Helpers](#-context-helpers)
@@ -53,6 +55,97 @@ class MyPlugin(Plugin):
 
 plugin = MyPlugin()
 ```
+
+---
+
+## 📥 Installation
+
+There are **two ways** to add new plugins:
+
+### 1. Manual (development) install
+Place your plugin folder under `plugins/` (e.g. `plugins/my_plugin/`) with an `__init__.py` that exposes a `plugin` instance. Restart RaspyJack.
+
+### 2. Archive auto‑install (recommended for deployment)
+Drop a compressed archive into the installer directory:
+
+```
+plugins/install/
+    my_plugin.zip
+    toolpack.tar.gz
+```
+
+Supported archive types: `.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`
+
+On startup RaspyJack will:
+1. Scan `plugins/install/` for supported archives
+2. Safely extract each into a temp directory (path traversal protected)
+3. Detect the first package directory containing `__init__.py`
+4. Move it into `plugins/<plugin_name>/` (appends `_new`, `_new2`, etc. if name already exists)
+5. Add a default config entry (disabled) to `plugins_conf.json`
+6. Rename/move the archive:
+     - `<name>.done` in `plugins/install/processed/` if successful
+     - `<name>.invalid` if no plugin package found
+     - `<name>.error` if extraction failed
+
+Example session log excerpt:
+```
+[PLUGIN] Installed plugin 'status_plugin' from 'status_plugin.zip' -> status_plugin
+[PLUGIN] Added new plugin 'status_plugin' to config with defaults (enabled = False)
+```
+
+After installation: enable via UI → `Plugins` → select plugin → `Enable Plugin` → `Save & Restart`.
+
+### Packaging a plugin
+From inside `plugins/` run (examples):
+```bash
+zip -r my_plugin.zip my_plugin
+tar czf my_plugin.tar.gz my_plugin
+```
+Copy the archive to `plugins/install/` and restart.
+
+---
+
+## 🧪 Plugin Template
+
+A fully documented reference implementation is provided in `plugins/example_plugin/`.
+
+Template contents:
+```
+example_plugin/
+    __init__.py          # Exposes plugin instance
+    _impl.py             # All hook examples + config schema
+    helpers/             # (Optional) support modules
+        util_example.py
+    bin/                 # (Optional) executable tools (auto-exposed to top-level bin/)
+        EXAMPLE_CMD
+    README.md            # Local docs (optional)
+```
+
+### Creating a new plugin from the template
+1. Copy the folder:
+     ```bash
+     cp -r plugins/example_plugin plugins/my_new_plugin
+     ```
+2. Rename class `ExamplePlugin` → `MyNewPlugin` inside `_impl.py`
+3. Change `name = "MyNewPlugin"` and optionally `priority`
+4. Adjust `get_config_schema()` with your boolean options
+5. Remove hooks you don't need to keep it lean
+6. (Optional) Add commands under `bin/` and helpers under `helpers/`
+7. Restart RaspyJack → plugin auto‑discovered (disabled by default)
+8. Enable in UI → `Plugins` menu
+
+### Exposed features in template
+- All lifecycle + event hooks implemented
+- Example configuration schema with two boolean flags
+- Demonstrates overlay drawing, tick updates, button handling
+- `get_info()` output for info viewer
+- Sample bin command (`EXAMPLE_CMD`)
+
+### Recommendations when adapting
+- Keep overlay output short to avoid conflicts
+- Use `on_config_changed()` for recalculating cache/state
+- Avoid blocking operations in hooks; spawn threads if needed
+- Prefix print logs with `[YourPlugin]` for clarity
 
 ---
 

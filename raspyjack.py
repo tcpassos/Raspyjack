@@ -320,6 +320,7 @@ from plugins.runtime import (
     save_plugins_conf as _rt_save_plugins_conf,
     reload_plugins as _rt_reload_plugins,
     plugin_tick_loop as _rt_plugin_tick_loop,
+    install_pending_plugin_archives as _rt_install_archives,
 )
 
 def reload_plugins():
@@ -1346,6 +1347,10 @@ if 'PluginManager' in globals() and PluginManager is not None:
         if not os.path.exists(plugins_cfg_path):
             print("[PLUGIN] Creating default plugins_conf.json")
             _rt_save_plugins_conf({}, default.install_path)
+        # Auto-install any pending plugin archives dropped into plugins/install
+        installed = _rt_install_archives(default.install_path)
+        if installed:
+            print(f"[PLUGIN] Installed new plugins from archives: {', '.join(installed)}")
         reload_plugins()
     except Exception as e:
         print(f"[PLUGIN] Error during plugin bootstrap: {e}")
