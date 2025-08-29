@@ -12,6 +12,10 @@ Modular plugin system for RaspyJack that allows adding functionality without mod
 - [Bin Commands](#-bin-commands)
 - [Complete Examples](#-complete-examples)
 - [Development](#-development)
+- [Event Bus](#-event-bus)
+- [Plugin Dependencies](#-plugin-dependencies)
+- [Plugin Menu Actions](#-plugin-menu-actions)
+ - [Persisting Configuration Changes](#-persisting-configuration-changes)
 
 ---
 
@@ -181,7 +185,62 @@ Configure plugins in `plugins/plugins_conf.json`:
 
 ### Plugin Configuration Schema
 
-Plugins can expose boolean configurations that appear as checkboxes in the UI menu:
+Plugins declare configuration options via `get_config_schema()`. Each option has:
+
+```
+{
+    "type": "boolean" | "string" | "list" | "number",
+    "label": "Short label",
+    "description": "Longer help text",
+    "default": <value matching type>
+}
+```
+
+CURRENT UI LIMITATION:
+    Only `boolean` options are rendered as toggleable items in the on-device menu.
+    Non-boolean types (`string`, `list`) are still fully supported in the schema,
+    auto-added to `plugins_conf.json`, and retrievable through
+    `get_config_value()`, but must be edited manually in the JSON file until the
+    menu gains editors for those types.
+
+Type semantics:
+    - `boolean`: True/False toggle (visible in UI)
+    - `string`: Arbitrary text (edit JSON manually)
+    - `list`: Typically list of strings (edit JSON manually). Example: payload names.
+    - `number`: JSON number (int ou float). Ajuste via arquivo JSON.
+
+Example (multi-type):
+```python
+def get_config_schema(self):
+        return {
+                "enable_feature": {
+                        "type": "boolean",
+                        "label": "Enable Feature",
+                        "description": "Turn feature on/off",
+                        "default": True
+                },
+                "interface": {
+                        "type": "string",
+                        "label": "Interface",
+                        "description": "Network interface to monitor (edit JSON)",
+                        "default": "eth0"
+                },
+                "connect_payloads": {
+                        "type": "list",
+                        "label": "Connect Payloads",
+                        "description": "Payloads to run on connect (edit JSON)",
+                        "default": []
+        },
+        "interval_secs": {
+            "type": "number",
+            "label": "Interval Seconds",
+            "description": "Polling interval (edit JSON)",
+            "default": 5
+                }
+        }
+```
+
+Below is a simpler boolean-only example used by older plugins:
 
 ```python
 class MyPlugin(Plugin):
@@ -242,6 +301,141 @@ def on_tick(self, dt):
     # Your plugin logic here
     pass
 ```
+
+---
+
+## 🚦 Event Bus
+
+An in-process event bus lets plugins publish and subscribe to named events without
+tight coupling.
+
+### Emitting an Event
+```python
+self.context['plugin_manager'].emit_event('ethernet.connected', interface='eth0', ip='192.168.0.10')
+```
+
+### Subscribing to an Event
+```python
+def on_eth(event_name, data):
+        print('Ethernet connected:', data)
+
+def on_load(self, ctx):
+        mgr = ctx.get('plugin_manager')
+        mgr.subscribe_event('ethernet.connected', on_eth)
+```
+
+Handler signature: `handler(event_name: str, data: dict)`.
+
+Current events (core / example):
+    - `ethernet.connected` { interface, ip }
+    - `ethernet.disconnected` { interface, ip=None }
+
+You can freely define your own event names (recommend dot notation: `module.topic`).
+
+---
+
+## 🔗 Plugin Dependencies
+
+A plugin can declare other plugin modules it depends on via a class attribute `requires`:
+
+```python
+class NetActionPlugin(Plugin):
+        name = "NetActionPlugin"
+        priority = 210
+        requires = ['ethernet_hook']  # directory/module names
+```
+
+Dependency loading behavior:
+ 1. Loader makes multiple passes attempting to load enabled plugins.
+ 2. A plugin is only instantiated once all entries in `requires` are loaded.
+ 3. If after passes some dependencies remain unmet, the plugin is skipped and a log line is printed.
+
+Best Practices:
+    - Keep dependency list short and focused.
+    - Emit events from dependency plugins instead of exposing internal attributes.
+    - Use `get_plugin_instance(name)` only if you need direct API access.
+
+---
+
+## 🧷 Plugin Menu Actions
+
+Plugins can inject custom actions into their own submenu without modifying core code.
+
+### API
+Implement `provide_menu_items(self) -> list` in your plugin class.
+
+Return a list whose entries are any of:
+1. `MenuItem` instances (preferred)
+2. Tuples `(label, callable)`
+3. Tuples `(label, callable, icon)` where `icon` is a Font Awesome glyph string
+4. Tuples `(label, callable, icon, description)` adding a short help text
+
+If at least one valid item is returned a separator `─ Actions ─` is inserted before them.
+
+Called every time the Plugins menu is rebuilt, so keep it fast and side‑effect free.
+
+### Example
+```python
+from plugins.base import Plugin
+
+class NetToolsPlugin(Plugin):
+    name = "net_tools"
+
+    def provide_menu_items(self):
+        return [
+            ("Run Quick Scan", lambda: self.ctx['exec_payload']('auto_nmap_scan.py'), '\\uf002', "Shortcut to payload"),
+            ("Show Status", self._show_status, '\\uf05a'),
+            # Or explicit MenuItem if you need advanced args
+            # MenuItem("Custom Action", lambda: ... , icon='\\uf0ad', description="Does something")
+        ]
+
+    def _show_status(self):
+        sb = self.ctx.get('status_bar') if self.ctx else None
+        if sb:
+            sb.set_temp_status("NetTools OK", ttl=2)
+```
+
+### Notes
+* Icons use the same Font Awesome font already loaded (pass raw unicode string, eg: `"\uf05a"`).
+* Invalid tuple shapes are ignored safely.
+* When disabled, a plugin's custom actions are not shown.
+
+---
+
+## 💾 Persisting Configuration Changes
+
+Plugins sometimes need to update their configuration (e.g. after an interactive
+picker). You can modify the in-memory value with `set_config_value()` but to
+save it permanently to `plugins_conf.json` use the helper:
+
+```python
+self.persist_option('icon_horizontal_pos', 42)
+```
+
+### API
+```python
+persist_option(key: str, value: Any, create_if_missing: bool = True) -> bool
+```
+
+Behavior:
+- Tries to load + update the central `plugins_conf.json` using runtime helpers.
+- Returns `True` on apparent success, `False` otherwise.
+- Creates the plugin entry if missing and `create_if_missing=True`.
+
+This is preferred over re‑implementing JSON writes inside each plugin.
+
+### Example (excerpt from Ethernet plugin)
+```python
+new_val = numeric_picker(wctx, label="ETH X", min_value=0, max_value=120, initial_value=current_int, step=1)
+self.set_config_value('icon_horizontal_pos', new_val)      # update in memory
+self.persist_option('icon_horizontal_pos', new_val)         # persist to disk
+```
+
+If you need to update multiple keys atomically, consider reading the current
+config via runtime helpers and writing back once. A future helper may provide
+batch persistence if needed.
+
+---
 
 ---
 
@@ -313,6 +507,14 @@ def on_after_scan(self, label: str, args: list[str], result_path: str) -> None:
 def get_info(self) -> str:
     """Return plugin status/info for UI"""
     return "Plugin working perfectly!"
+
+def provide_menu_items(self) -> list:
+    """Return optional custom menu items for this plugin's submenu.
+
+    Return [] (or omit) for no extra actions. Accepts MenuItem objects or
+    tuples (label, callable[, icon[, description]]). Called whenever plugin
+    menus are rebuilt. Keep it lightweight (no blocking work)."""
+    return []
 ```
 
 ---
@@ -350,6 +552,7 @@ def on_load(self, context):
 - `draw_image()` - PIL base image
 - `draw_obj()` - PIL ImageDraw object
 - `status_bar` - StatusBar instance
+- `widget_context` - The active `WidgetContext` (pass to pickers/dialogs)
 
 ---
 

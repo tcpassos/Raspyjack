@@ -251,6 +251,9 @@ def reload_plugins(current_manager: Optional[PluginManager], install_path: str, 
             manager.unload_all()
     except Exception:
         pass
+    # Ensure plugin_manager reference is present in context for inter-plugin communication
+    context = dict(context)
+    context['plugin_manager'] = manager
     if hasattr(manager, 'load_from_config'):
         manager.load_from_config(cfg, context)
     else:

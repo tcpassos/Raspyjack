@@ -6,13 +6,23 @@ Life‑cycle / callback methods (all optional):
         Called once right after the plugin is instantiated and registered.
         `context` contains helper callables and shared state references.
         Currently provided keys (may expand):
-            exec_payload(name)          -> run a payload script
-            get_menu()                  -> current menu list
-            is_responder_running()      -> bool
-            is_mitm_running()           -> bool
-            draw_image()                -> PIL base image (do not mutate globally)
-            draw_obj()                  -> PIL ImageDraw for base image
-            status_bar                  -> StatusBar instance (has set_temp_status, is_busy, etc.)
+            exec_payload(name)          -> Run a payload script by relative filename.
+            is_responder_running()      -> Bool indicating Responder activity.
+            is_mitm_running()           -> Bool indicating MITM/sniff activity.
+            draw_image()                -> PIL base image (DO NOT mutate globally — copy if needed).
+            draw_obj()                  -> PIL ImageDraw tied to the base image.
+            status_bar                  -> StatusBar instance (set_temp_status, is_busy, etc.).
+            widget_context              -> WidgetContext instance (interactive UI helpers).
+            plugin_manager              -> PluginManager instance (advanced access; prefer helpers below).
+            emit_event(event, **data)   -> Convenience wrapper to publish an event on the bus.
+            subscribe_event(event, h)   -> Register an event handler h(event_name, data).
+            defaults                    -> Defaults object (paths: install_path, payload_path, payload_log, etc.).
+
+        Notes:
+            - Some keys (widget_context, emit_event, subscribe_event, plugin_manager, defaults)
+              are injected AFTER initial plugin load once the UI is fully initialized; if accessed
+              inside on_load they may be None. Use on_tick or later, or defensively check for None.
+            - Avoid mutating objects you don't own (draw over small regions, never reassign globals).
 
     on_unload() -> None
         Called during shutdown (Leave) so the plugin can release resources.
@@ -37,6 +47,17 @@ Life‑cycle / callback methods (all optional):
     on_after_exec_payload(payload_name: str, success: bool) -> None
         Fired after the payload returns (success indicates no exception in the
         wrapper, not inside the payload itself necessarily).
+
+    provide_menu_items() -> list
+        Return a list of custom menu entries to be added to this
+        plugin's submenu in the UI. Each entry can be one of:
+            - A MenuItem instance (preferred)
+            - A tuple (label, callable)
+            - A tuple (label, callable, icon) where icon is a Font Awesome
+              glyph string. The core UI will wrap tuples into MenuItem objects.
+        Use this to expose plugin-specific actions (e.g., quick commands,
+        diagnostics) without modifying the core menu system. Called each time
+        plugin menus are rebuilt, so it should be fast and side‑effect free.
 
 Design goals:
 - Canonical package layout per plugin:
@@ -77,6 +98,10 @@ class Plugin:
     priority: int = 100  # lower = earlier
     # Will be filled with the plugin specific configuration block
     config: dict | None = None
+    # Optional dependency list: module (directory) names this plugin needs loaded first
+    requires: list[str] | None = None
+    # Internal: path to module file (set by PluginManager) for persistence helpers
+    _module_file: str | None = None
 
     # --- Life‑cycle hooks -------------------------------------------------
     def on_load(self, ctx: dict) -> None: ...
@@ -90,6 +115,7 @@ class Plugin:
     def on_after_exec_payload(self, payload_name: str, success: bool) -> None: ...
     def on_before_scan(self, label: str, args: list[str]) -> None: ...
     def on_after_scan(self, label: str, args: list[str], result_path: str) -> None: ...
+    def provide_menu_items(self) -> list: return []
     
     def get_info(self) -> str:
         return "No information available for this plugin."
@@ -98,22 +124,51 @@ class Plugin:
     def get_config_schema(self) -> dict:
         """Return configuration schema for this plugin.
         
-        Returns a dictionary where keys are config names and values are config definitions.
-        Currently only boolean configurations are supported.
-        
-        Example:
+        Returns a dictionary where keys are config names and values are
+        definitions. Each definition MUST at least contain:
+            type        -> one of: "boolean", "string", "list", "number"
+            label       -> short human label for menus / UI
+            description -> longer help text (may be truncated in UI)
+            default     -> default value (type must match)
+
+        UI LIMITATION (current):
+            Only entries of type "boolean" are presented in the on-device
+            menu for toggle (True/False). Other types ("string", "list") are
+            still loaded, merged into config, and exposed to plugins via
+            get_config_value(), but must be edited manually in the
+            plugins_conf.json file until richer UI editors are implemented.
+
+        Type semantics:
+            boolean -> stored as native bool
+            string  -> stored as str
+            list    -> stored as list (recommended: list[str])
+            number  -> stored as int or float (JSON numeric)
+
+        Example schema supporting multiple types:
             {
                 "auto_start": {
                     "type": "boolean",
                     "label": "Auto Start on Boot",
-                    "description": "Automatically start this plugin when system boots",
+                    "description": "Start this plugin automatically on boot",
                     "default": False
                 },
-                "debug_mode": {
-                    "type": "boolean", 
-                    "label": "Debug Mode",
-                    "description": "Enable debug logging for this plugin",
-                    "default": False
+                "interface": {
+                    "type": "string",
+                    "label": "Net Interface",
+                    "description": "Interface name (edit JSON for now)",
+                    "default": "eth0"
+                },
+                "connect_payloads": {
+                    "type": "list",
+                    "label": "Connect Payloads",
+                    "description": "List of payload scripts (edit JSON)",
+                    "default": []
+                },
+                "interval_secs": {
+                    "type": "number",
+                    "label": "Interval Seconds",
+                    "description": "Polling interval (edit JSON)",
+                    "default": 5
                 }
             }
         """
@@ -150,6 +205,57 @@ class Plugin:
         """Called when a configuration value changes. Override to react to config changes."""
         pass
 
+    # --- Persistence convenience -----------------------------------------
+    def persist_option(self, key: str, value, create_if_missing: bool = True) -> bool:
+        """Persist a single option value into plugins_conf.json for this plugin.
+
+        Attempts to use runtime helpers (load_plugins_conf / save_plugins_conf)
+        to avoid races with concurrent writes. Falls back to a direct JSON
+        edit if those are unavailable. Silent best-effort; returns True on
+        apparent success, False otherwise.
+
+        Parameters:
+            key: option key inside this plugin's options dict
+            value: JSON-serializable value to store
+            create_if_missing: if True, create plugin entry when absent
+        """
+        plugin_module_name = None
+        try:
+            # Determine plugin package folder name from owning module file path
+            if self._module_file:
+                import os
+                plugin_module_name = os.path.basename(os.path.dirname(self._module_file))
+            else:
+                # Fallback: attempt to infer via class module path
+                mod_name = self.__class__.__module__
+                if mod_name.startswith('plugins.'):
+                    plugin_module_name = mod_name.split('.')[1]
+        except Exception:
+            pass
+        if not plugin_module_name:
+            return False
+        # First path: runtime helpers
+        try:
+            from plugins.runtime import load_plugins_conf as _load_conf, save_plugins_conf as _save_conf
+            from pathlib import Path
+            base = Path(self._module_file).resolve() if self._module_file else Path(__file__).resolve()
+            while base.name != 'plugins' and base.parent != base:
+                base = base.parent
+            install_root = base.parent
+            conf = _load_conf(str(install_root))
+            entry = conf.get(plugin_module_name)
+            if entry is None:
+                if not create_if_missing:
+                    return False
+                entry = {'enabled': True, 'options': {}}
+                conf[plugin_module_name] = entry
+            opts = entry.setdefault('options', {})
+            opts[key] = value
+            _save_conf(conf, str(install_root))
+            return True
+        except Exception:
+            return False
+
 
 @dataclass
 class _LoadedPlugin:
@@ -165,6 +271,8 @@ class PluginManager:
         self._last_tick: float = time.time()
         self._ctx: dict = {}
         self.verbose = verbose
+        # Simple event bus structures
+        self._event_handlers: dict[str, list] = {}
         # Internal synchronization
         import threading
         self._lock = threading.RLock()
@@ -211,6 +319,10 @@ class PluginManager:
                     self._log(f"[PLUGIN] on_load error in {instance.name}: {e}")
                     self._log(traceback.format_exc())
                     continue
+                try:
+                    instance._module_file = getattr(mod, '__file__', None)
+                except Exception:
+                    pass
 
                 self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
 
@@ -241,55 +353,78 @@ class PluginManager:
         """
         with self._lock:
             self._ctx = context
+            # Perform a dependency-aware multi-pass load.
+            pending: dict[str, tuple[dict, ModuleType | None, Plugin | None]] = {}
             for module_name, pconf in config.items():
-                if not isinstance(pconf, dict):
+                if not isinstance(pconf, dict) or not pconf.get("enabled", False):
                     continue
-                if not pconf.get("enabled", False):
-                    continue
-                mod_qual = f"plugins.{module_name}"
-                try:
-                    mod = importlib.import_module(mod_qual)
-                except Exception as e:
-                    self._log(f"[PLUGIN] Failed to import '{mod_qual}': {e}")
-                    continue
+                pending[module_name] = (pconf, None, None)
 
-                instance = getattr(mod, "plugin", None)
-                if instance is None:
-                    for attr in dir(mod):
-                        obj = getattr(mod, attr)
-                        if isinstance(obj, type) and issubclass(obj, Plugin) and obj is not Plugin:
-                            try:
-                                instance = obj()
-                            except Exception as e:
-                                self._log(f"[PLUGIN] Could not instantiate {obj}: {e}")
-                            break
-                if instance is None:
-                    self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
-                    continue
-
-                if isinstance(pconf, dict):
+            progressed = True
+            while progressed and pending:
+                progressed = False
+                for module_name in list(pending.keys()):
+                    pconf, mod_ref, inst_ref = pending[module_name]
+                    mod_qual = f"plugins.{module_name}"
+                    if mod_ref is None:
+                        try:
+                            mod_ref = importlib.import_module(mod_qual)
+                        except Exception as e:
+                            self._log(f"[PLUGIN] Failed to import '{mod_qual}': {e}")
+                            del pending[module_name]
+                            continue
+                    if inst_ref is None:
+                        inst_ref = getattr(mod_ref, "plugin", None)
+                        if inst_ref is None:
+                            for attr in dir(mod_ref):
+                                obj = getattr(mod_ref, attr)
+                                if isinstance(obj, type) and issubclass(obj, Plugin) and obj is not Plugin:
+                                    try:
+                                        inst_ref = obj()
+                                    except Exception as e:
+                                        self._log(f"[PLUGIN] Could not instantiate {obj}: {e}")
+                                    break
+                        if inst_ref is None:
+                            self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
+                            del pending[module_name]
+                            continue
+                    # Check dependencies
+                    reqs = getattr(inst_ref, 'requires', None) or []
+                    unmet = [r for r in reqs if not self._is_module_loaded(r)]
+                    if unmet:
+                        # Dependency not yet loaded; skip this round
+                        pending[module_name] = (pconf, mod_ref, inst_ref)
+                        continue
+                    # Apply config
                     if "priority" in pconf:
                         try:
-                            instance.priority = int(pconf["priority"])
+                            inst_ref.priority = int(pconf["priority"])
                         except Exception:
                             pass
-                    instance.config = pconf
+                    inst_ref.config = pconf
                     if "options" in pconf and isinstance(pconf["options"], dict):
-                        instance.options = pconf["options"]
-
-                try:
-                    instance.on_load(context)
-                except Exception as e:
-                    self._log(f"[PLUGIN] on_load error in {instance.name}: {e}")
-                    continue
-
-                self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
-                # After successful load, expose bin tools if present
-                try:
-                    self._expose_plugin_bin(mod)
-                except Exception as e:
-                    self._log(f"[PLUGIN] bin expose error for {module_name}: {e}")
-
+                        inst_ref.options = pconf["options"]
+                    # Load
+                    try:
+                        inst_ref.on_load(context)
+                    except Exception as e:
+                        self._log(f"[PLUGIN] on_load error in {inst_ref.name}: {e}")
+                        del pending[module_name]
+                        continue
+                    try:
+                        inst_ref._module_file = getattr(mod_ref, '__file__', None)
+                    except Exception:
+                        pass
+                    self._loaded.append(_LoadedPlugin(instance=inst_ref, module=mod_ref))
+                    try:
+                        self._expose_plugin_bin(mod_ref)
+                    except Exception as e:
+                        self._log(f"[PLUGIN] bin expose error for {module_name}: {e}")
+                    del pending[module_name]
+                    progressed = True
+            # Report unresolved dependencies
+            for leftover in pending.keys():
+                self._log(f"[PLUGIN] Skipped '{leftover}' due to unmet dependencies: {getattr(pending[leftover][2], 'requires', None)}")
             self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
             if self.verbose:
                 self._log("[PLUGIN] Loaded (config): " + ", ".join(p.instance.name for p in self._loaded) or "(none)")
@@ -395,7 +530,7 @@ class PluginManager:
                 except Exception as e:
                     self._log(f"[PLUGIN] get_info error in {lp.instance.name}: {e}")
                     return "Error getting info."
-        return "Plugin not loaded."
+        return "Plugin not loaded or without info."
     
     def get_plugin_config_schema(self, name: str) -> dict:
         """Get configuration schema for a specific plugin by name."""
@@ -445,6 +580,40 @@ class PluginManager:
     def _log(self, msg: str) -> None:
         if self.verbose:
             print(msg)
+
+    # ------------------------------------------------------------------
+    # Event Bus
+    # ------------------------------------------------------------------
+    def subscribe_event(self, event: str, handler) -> None:
+        """Subscribe a handler(event_name: str, data: dict) to an event."""
+        with self._lock:
+            self._event_handlers.setdefault(event, []).append(handler)
+
+    def emit_event(self, event: str, **data) -> None:
+        """Emit an event to all subscribers."""
+        handlers = []
+        with self._lock:
+            handlers = list(self._event_handlers.get(event, []))
+        for h in handlers:
+            try:
+                h(event, data)
+            except Exception:
+                self._log(f"[PLUGIN] event handler error for {event}")
+
+    # ------------------------------------------------------------------
+    # Helper utilities
+    # ------------------------------------------------------------------
+    def get_plugin_instance(self, module_name: str):
+        for lp in self._loaded:
+            if lp.module.__name__.split('.')[-1] == module_name:
+                return lp.instance
+        return None
+
+    def _is_module_loaded(self, module_name: str) -> bool:
+        for lp in self._loaded:
+            if lp.module.__name__.split('.')[-1] == module_name:
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # Bin exposure helpers

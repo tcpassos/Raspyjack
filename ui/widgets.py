@@ -460,16 +460,116 @@ class ColorPicker(ValuePickerWidget):
         return final_color
 
 
-class FileExplorer(BaseWidget):
-    """Simple scrollable file/directory explorer widget."""
+class NumericPicker(ValuePickerWidget):
+    """Generic numeric value picker for selecting an integer within a range.
 
-    def show(self, start_path: str = "/", extensions: str = "", confirm_open: bool = True) -> str:
+    Similar visual style to `IpValuePicker`, but configurable min/max and step sizes.
+
+    Controls:
+      KEY_UP_PIN / KEY_DOWN_PIN : increment / decrement by `step`
+      KEY1_PIN / KEY3_PIN       : increment / decrement by `fast_step` (default 5 * step)
+      KEY_PRESS_PIN             : confirm / return value
+
+    Parameters passed to show():
+      label (str): Optional label prefix displayed before the value.
+      min_value (int): Minimum allowed value (inclusive).
+      max_value (int): Maximum allowed value (inclusive).
+      initial_value (int): Starting value (clamped inside range).
+      step (int): Primary increment step (default 1).
+      fast_step (int | None): Fast increment step (defaults to 5 * step).
+    """
+
+    def show(self,
+             label: str = "VAL",
+             min_value: int = 0,
+             max_value: int = 100,
+             initial_value: int = 0,
+             step: int = 1,
+             fast_step: int | None = None) -> int:
+        # Sanitize parameters
+        if max_value < min_value:
+            max_value = min_value
+        if step <= 0:
+            step = 1
+        if fast_step is None or fast_step <= 0:
+            fast_step = step * 5
+        value = max(min_value, min(max_value, initial_value))
+
+        up_down_offset = 75  # align with IpValuePicker arrows
+        self.ctx.color.draw_menu_background()
+        time.sleep(0.20)
+
+        while True:
+            render_up = False
+            render_down = False
+
+            # Clear value area
+            try:
+                self.ctx.draw.rectangle([
+                    (self.ctx.default.start_text[0]-5, 1 + self.ctx.default.start_text[1]),
+                    (120, self.ctx.default.start_text[1] + self.ctx.default.text_gap * 6)
+                ], fill=self.ctx.color.background)
+            except Exception:
+                pass
+
+            # Draw arrows and current value
+            self._draw_up_down(value, up_down_offset, render_up, render_down, self.ctx.color.selected_text)
+            try:
+                self.ctx.draw.text((5, 60), f"{label}:", fill=self.ctx.color.selected_text,
+                                   font=self.ctx.fonts.get('default'))
+            except Exception:
+                pass
+
+            self.update_display()
+
+            button = self.ctx.get_button()
+            if button == "KEY_UP_PIN":
+                new_v = value + step
+                if new_v <= max_value:
+                    value = new_v
+                render_up = True
+            elif button == "KEY_DOWN_PIN":
+                new_v = value - step
+                if new_v >= min_value:
+                    value = new_v
+                render_down = True
+            elif button == "KEY1_PIN":
+                new_v = value + fast_step
+                if new_v > max_value:
+                    new_v = max_value
+                if new_v != value:
+                    value = new_v
+                render_up = True
+            elif button == "KEY3_PIN":
+                new_v = value - fast_step
+                if new_v < min_value:
+                    new_v = min_value
+                if new_v != value:
+                    value = new_v
+                render_down = True
+            elif button == "KEY_PRESS_PIN":
+                return value
+
+            # Redraw highlight frame
+            self._draw_up_down(value=value, offset=up_down_offset, up=render_up, down=render_down,
+                               render_color=self.ctx.color.selected_text)
+            self.update_display()
+            time.sleep(0.08)
+
+
+class FileExplorer(BaseWidget):
+    """Simple scrollable file/directory explorer widget.
+
+    Removed implicit confirmation step; callers now decide whether to prompt
+    after a file selection by invoking yn_dialog or similar helpers.
+    """
+
+    def show(self, start_path: str = "/", extensions: str = "") -> str:
         """Run the explorer interaction.
 
         Args:
             start_path: Initial directory path.
             extensions: Pipe-separated filter (e.g. ".txt|.log"). If empty, no filtering.
-            confirm_open: If True, ask user to confirm opening a file. If False, return immediately.
         Returns:
             Selected file path or empty string if user exits/cancels.
         """
@@ -512,10 +612,7 @@ class FileExplorer(BaseWidget):
                     current_path = full_sel
                     continue
                 # It's a file candidate
-                if not confirm_open:
-                    return full_sel
-                if yn_dialog(self.ctx, question="Open this file?", yes_text="Yes", no_text="No", second_line=sel[:20]):
-                    return full_sel
+                return full_sel
             except Exception:
                 return ""
 
@@ -577,17 +674,21 @@ def color_picker(context: WidgetContext, initial_color: str = "#000000") -> str:
     """Show a color picker and return the chosen color as a hex string."""
     return ColorPicker(context).show(initial_color)
 
+def numeric_picker(context: WidgetContext, label: str = "VAL", min_value: int = 0, max_value: int = 100,
+                   initial_value: int = 0, step: int = 1, fast_step: int | None = None) -> int:
+    """Show a generic numeric picker and return the selected integer."""
+    return NumericPicker(context).show(label=label, min_value=min_value, max_value=max_value,
+                                       initial_value=initial_value, step=step, fast_step=fast_step)
+
 def display_scrollable_info(context: WidgetContext, lines: List[str], title: str = "Info"):
     """Display scrollable information text."""
     ScrollableText(context).show(lines, title=title)
 
-def explorer(context: WidgetContext, path: str = "/", extensions: str = "", confirm_open: bool = True) -> str:
+def explorer(context: WidgetContext, path: str = "/", extensions: str = "") -> str:
     """Show a file explorer and return the selected file path or empty string.
 
-    confirm_open controls whether a confirmation dialog is displayed before
-    returning a selected file.
     """
-    return FileExplorer(context).show(path, extensions, confirm_open=confirm_open)
+    return FileExplorer(context).show(path, extensions)
 
 def browse_images(context: WidgetContext, start_path: str = "/root/", extensions: str = ".gif|.png|.bmp|.jpg|.jpeg") -> None:
     """Convenience wrapper that creates an ImageBrowser and displays images."""
@@ -595,7 +696,7 @@ def browse_images(context: WidgetContext, start_path: str = "/root/", extensions
 
 __all__ = [
     'WidgetContext', 'BaseWidget', 'ValuePickerWidget', 'Dialog', 'InfoDialog', 'YesNoDialog', 
-    'ScrollableText', 'IpValuePicker', 'ColorPicker',
-    'dialog', 'dialog_info', 'yn_dialog', 'ip_value_picker', 'color_picker',
+    'ScrollableText', 'IpValuePicker', 'ColorPicker', 'NumericPicker',
+    'dialog', 'dialog_info', 'yn_dialog', 'ip_value_picker', 'color_picker', 'numeric_picker',
     'display_scrollable_info', 'FileExplorer', 'explorer', 'ImageBrowser', 'browse_images'
 ]

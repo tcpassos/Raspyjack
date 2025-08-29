@@ -175,7 +175,6 @@ class Defaults():
     updown_center = 52
     updown_pos = [15, updown_center, 88]
 
-
     imgstart_path = "/root/"
 
     install_path = "/root/Raspyjack/"
@@ -335,6 +334,12 @@ def reload_plugins():
         'draw_image': lambda: image,
         'draw_obj': lambda: draw,
         'status_bar': status_bar,
+        # Placeholders (filled after WidgetContext is created in main())
+        'widget_context': None,
+        'plugin_manager': None,
+        'emit_event': None,
+        'subscribe_event': None,
+        'defaults': None,
     }
     _plugin_manager = _rt_reload_plugins(_plugin_manager, default.install_path, ctx)
 
@@ -437,6 +442,9 @@ def _browse_and_show_text_files(base_subpath: str, extensions: str, title: str):
         rfile = explorer(_widget_context, root_path, extensions=extensions)
         if not rfile:
             break
+        fname = os.path.basename(rfile)
+        if not yn_dialog(_widget_context, question="Open file?", yes_text="Yes", no_text="No", second_line=fname[:20]):
+            continue
         try:
             with open(rfile, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read().splitlines()
@@ -980,7 +988,7 @@ def pick_and_run_payload():
     to relevant files (.py and payload.sh) while still allowing directory descent.
     """
     base_path = default.payload_path
-    selected = explorer(_widget_context, base_path, extensions=".py|.sh", confirm_open=False)
+    selected = explorer(_widget_context, base_path, extensions=".py|.sh")
     if not selected:
         return
     rel = os.path.relpath(selected, base_path)
@@ -1240,6 +1248,33 @@ class MenuManager:
                                 submenu_items.append(config_checkbox)
             except Exception as e:
                 print(f"[PLUGIN] Error building config menu for {plugin_name}: {e}")
+
+            # Append plugin-provided custom actions (if any)
+            try:
+                if '_plugin_manager' in globals() and _plugin_manager is not None and enabled:
+                    inst = _plugin_manager.get_plugin_instance(plugin_name)
+                    if inst and hasattr(inst, 'provide_menu_items'):
+                        provided = inst.provide_menu_items() or []
+                        built_items = []
+                        for entry in provided:
+                            if isinstance(entry, MenuItem):
+                                built_items.append(entry)
+                            elif isinstance(entry, tuple):
+                                # tuple forms: (label, callable) or (label, callable, icon, description?)
+                                label = None; action = None; icon = None; description = None
+                                if len(entry) >= 2:
+                                    label, action = entry[0], entry[1]
+                                if len(entry) >= 3:
+                                    icon = entry[2]
+                                if len(entry) >= 4:
+                                    description = entry[3]
+                                if label and (callable(action) or isinstance(action, str)):
+                                    built_items.append(MenuItem(label, action, icon=icon, description=description))
+                        if built_items:
+                            submenu_items.append(MenuItem("─ Actions ─", action=None))
+                            submenu_items.extend(built_items)
+            except Exception as e:
+                print(f"[PLUGIN] Error adding custom menu items for {plugin_name}: {e}")
             
             self.menus[submenu_key] = submenu_items
 
@@ -1319,6 +1354,19 @@ def main():
         status_bar=status_bar,
         plugin_manager=_plugin_manager
     )
+    # After widget context creation, inject into plugin manager shared context
+    try:
+        if '_plugin_manager' in globals() and _plugin_manager is not None:
+            # Update existing context dict inside plugin manager (if accessible)
+            pm_ctx = getattr(_plugin_manager, '_ctx', None)
+            if isinstance(pm_ctx, dict):
+                pm_ctx['widget_context'] = _widget_context
+                pm_ctx['plugin_manager'] = _plugin_manager
+                pm_ctx['emit_event'] = getattr(_plugin_manager, 'emit_event', None)
+                pm_ctx['subscribe_event'] = getattr(_plugin_manager, 'subscribe_event', None)
+                pm_ctx['defaults'] = default
+    except Exception:
+        pass
     
     color.draw_menu_background()
     color.draw_border()
