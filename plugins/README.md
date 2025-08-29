@@ -932,6 +932,24 @@ def get_config_schema(self):
   - Webhook configuration via `discord_webhook.txt`
   - Network interface detection
 
+### `ethernet_hook`
+- **Function**: Monitor Ethernet interface (default: `eth0`) and trigger payloads on connect/disconnect events.
+- **HUD**: Shows "network-wired" icon in top bar when IPv4 is present.
+- **Configuration Options**:
+    - `interface`: Interface to monitor (default: `eth0`)
+    - `show_status_icon`: Show link icon (default: true)
+    - `icon_horizontal_pos`: Icon X position (default: 30)
+    - `on_ethernet_connected`: Payloads to run on connect
+    - `on_ethernet_disconnected`: Payloads to run on disconnect
+- **Info Display**: Current interface, IP, status, payload lists, icon status
+- **Events Emitted**:
+    - `ethernet.connected` { interface, ip }
+    - `ethernet.disconnected` { interface, ip }
+- **Menu Actions**:
+    - Set Icon Position
+    - Add Connect Payload
+    - Clear Connect Payloads
+
 ### Plugin Menu Navigation
 
 Access plugin configurations through the main menu:
