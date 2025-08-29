@@ -174,18 +174,21 @@ class EthernetHookPlugin(Plugin):
     # ------------------------------------------------------------------
     def _fire_hooks(self, hook_key: str, ip: str | None):
         payloads = self._get_payload_list(hook_key)
+        # Always emit the event (state transition) regardless of payload execution viability.
+        # This guarantees other plugins depending on ethernet.connected / ethernet.disconnected
+        # are not starved if a previous payload execution is still running.
+        self._emit_event_for_hook(hook_key, ip)
+
         if not payloads:
-            # Still emit event even if no payloads
-            self._emit_event_for_hook(hook_key, ip)
             return
+
         if self._pending_thread and self._pending_thread.is_alive():
-            print(f"[EthernetHook] Previous hook run still active; skipping {hook_key}")
+            # Skip launching another payload batch while one is active.
+            print(f"[EthernetHook] Payload runner busy; skipping payloads for {hook_key}")
             return
 
         def runner():
-            print(f"[EthernetHook] Firing {hook_key} ({len(payloads)} payloads) ip={ip or 'None'}")
-            # Emit event first so listeners can react before payload side-effects
-            self._emit_event_for_hook(hook_key, ip)
+            print(f"[EthernetHook] Executing {hook_key} payloads ({len(payloads)}) ip={ip or 'None'}")
             for p in payloads:
                 try:
                     exec_payload = self.ctx.get('exec_payload') if self.ctx else None
@@ -195,7 +198,7 @@ class EthernetHookPlugin(Plugin):
                         print(f"[EthernetHook] exec_payload helper not available for '{p}'")
                 except Exception as e:
                     print(f"[EthernetHook] Payload '{p}' failed: {e}")
-            print(f"[EthernetHook] Completed {hook_key}")
+            print(f"[EthernetHook] Done {hook_key}")
 
         self._pending_thread = threading.Thread(target=runner, daemon=True)
         self._pending_thread.start()

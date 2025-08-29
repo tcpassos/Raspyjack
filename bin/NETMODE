@@ -1,83 +1,61 @@
-#!/bin/bash
+#!/bin/sh
 
-# ===================================================================
-# NETMODE - Raspyjack Network Mode Controller
-# -------------------------------------------------------------------
-# This script configures the primary Ethernet interface (eth0)
-# for different network attack scenarios.
-# ===================================================================
-
-INTERFACE="eth0"
-
-# Function to stop services and reset the interface to a clean state
-cleanup() {
-    SERIAL_WRITE "Resetting network state..."
-    # Stop any running dnsmasq instance
-    killall dnsmasq 2>/dev/null
-    # Turn off promiscuous mode
-    ip link set "$INTERFACE" promisc off 2>/dev/null
-    # Flush all IP addresses from the interface
-    ip addr flush dev "$INTERFACE"
-    # Ensure the interface is up
-    ip link set "$INTERFACE" up
-    SERIAL_WRITE "Network state has been reset."
+show_usage() {
+    echo "Usage: $0 [DHCP_CLIENT|DHCP_SERVER|AUTO]"
+    echo ""
 }
 
-# Check for root privileges
-if [[ $EUID -ne 0 ]]; then
-   SERIAL_WRITE "Error: NETMODE needs root privileges."
-   exit 1
-fi
+shut_it_all_down() {
+    /etc/init.d/dnsmasq stop
+    pkill -9 dnsmasq #just in case
+    pkill -9 udhcpc #this is the observed dhcp client
+    pkill -9 odhcpcd #just in case
+}
 
-MODE=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+configure_dhcp_client() {
+    shut_it_all_down
+    uci set network.lan.proto='dhcp'
+}
 
-# Main logic to switch between modes
-case "$MODE" in
-  DHCP_CLIENT)
-    SERIAL_WRITE "Setting mode: DHCP_CLIENT"
-    cleanup
-    # Request a new IP address from the network's DHCP server
-    # On Raspberry Pi OS, dhcpcd usually handles this automatically.
-    # This command forces a renewal.
-    dhclient -r "$INTERFACE" && dhclient "$INTERFACE"
-    SERIAL_WRITE "DHCP client mode activated."
-    ;;
+configure_dhcp_server() {
+    shut_it_all_down
+    uci set network.lan.proto='static'
+    uci set network.lan.ipaddr='172.16.24.1'
+    uci set network.lan.netmask='255.255.255.0'
+    uci set network.lan.ip6assign='60'
+    #remove old dhcp options before setting new
+    uci -q delete dhcp.lan.dhcp_option
+    uci add_list dhcp.lan.dhcp_option="3,172.16.24.1"
+    #disables gateway
+    #uci add_list dhcp.lan.dhcp_option="3"
+    /etc/init.d/dnsmasq start
+}
 
-  DHCP_SERVER)
-    SERIAL_WRITE "Setting mode: DHCP_SERVER"
-    cleanup
-    
-    # Assign a static IP to our interface to act as the gateway
-    ip addr add 172.16.24.1/24 dev "$INTERFACE"
-    
-    # Start dnsmasq to serve IPs on our static subnet
-    # --dhcp-range=<start>,<end>,<netmask>,<lease_time>
-    dnsmasq \
-      --interface="$INTERFACE" \
-      --dhcp-range=172.16.24.100,172.16.24.200,255.255.255.0,12h \
-      --no-daemon
-      
-    SERIAL_WRITE "DHCP server mode activated."
-    ;;
-
-  TRANSPARENT)
-    SERIAL_WRITE "Setting mode: TRANSPARENT"
-    cleanup
-    # Set the interface to promiscuous mode to capture all packets
-    ip link set "$INTERFACE" promisc on
-    SERIAL_WRITE "Transparent/passive mode activated."
-    ;;
-    
-  OFF)
-    SERIAL_WRITE "Setting mode: OFF"
-    cleanup
-    # systemctl restart networking
-    SERIAL_WRITE "Network modes are off."
-    ;;
-
-  *)
-    SERIAL_WRITE "Error: Invalid NETMODE specified."
-    SERIAL_WRITE "Usage: NETMODE [DHCP_CLIENT|DHCP_SERVER|TRANSPARENT|OFF]"
-    exit 1
-    ;;
+case $1 in
+    "DHCP_CLIENT")
+        configure_dhcp_client
+        ;;
+    "DHCP_SERVER")
+        configure_dhcp_server
+        ;;
+    "AUTO")
+        #make sure nothing interferes
+        shut_it_all_down
+        #this will exit 0 if a dhcp discovery/request packet is seen, and 124 if not
+        sniffed="$(timeout -t 15 tcpdump -Z nobody -i eth0 -c 3 udp src port 68 and udp dst port 67 -v 2>&1)"
+        if echo "${sniffed}" | grep -q 'DHCP-Message Option 53, length 1: Discover' && \
+          ! echo "${sniffed}" | grep -q 'DHCP-Message Option 53, length 1: Request'; then
+            #we saw a dhcp discover but no dhcp request, so someone wants a dhcp server and didn't find one
+            configure_dhcp_server
+        else
+            configure_dhcp_client
+        fi
+        ;;
+    *)
+        show_usage
+        exit 0
+        ;;
 esac
+
+uci commit network
+/etc/init.d/network restart
