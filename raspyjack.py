@@ -1217,12 +1217,39 @@ class MenuManager:
                         print(f"[PLUGIN] Config update error for {pname}.{config_key}: {e}")
                 
                 return _config_toggle_callback
+
+            def _make_uninstall(pname):
+                def _uninstall():
+                    if not yn_dialog(_widget_context, question="Uninstall?", yes_text="Yes", no_text="No", second_line=pname[:20]):
+                        return
+                    try:
+                        # Remove directory under plugins/<pname>
+                        plug_dir = os.path.join(default.install_path, 'plugins', pname)
+                        if os.path.isdir(plug_dir):
+                            import shutil
+                            shutil.rmtree(plug_dir, ignore_errors=True)
+                        # Remove config entry
+                        cfg_map = _rt_load_plugins_conf(default.install_path)
+                        if pname in cfg_map:
+                            del cfg_map[pname]
+                            _rt_save_plugins_conf(cfg_map, default.install_path)
+                        # Feedback & menu refresh
+                        dialog_info(_widget_context, f"Plugin {pname}\nRemoved!\nRestart UI to\napply changes", wait=True, center=True)
+                        # Rebuild menu list to reflect removal
+                        self._build_plugins_menu()
+                    except Exception as e:
+                        try:
+                            dialog_info(_widget_context, f"Uninstall error\n{str(e)[:18]}", wait=True, center=True)
+                        except Exception:
+                            pass
+                return _uninstall
             
             # Create submenu for this plugin
             toggle_text = "Disable" if enabled else "Enable"
             submenu_items = [
                 MenuItem(f"{toggle_text} Plugin", _make_toggle(plugin_name)),
                 MenuItem("Show Information", _make_info_viewer(plugin_name)),
+                MenuItem("Uninstall Plugin", _make_uninstall(plugin_name)),
             ]
             
             # Add plugin-specific configuration items if plugin is loaded and has configs
