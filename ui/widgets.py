@@ -202,6 +202,30 @@ class InfoDialog(BaseWidget):
             time.sleep(timeout)
 
 
+class WaitingDialog(BaseWidget):
+    """Non-blocking waiting overlay used to indicate background processing."""
+
+    def show(self, text: str = "Please wait..."):
+        # Draw translucent overlay
+        try:
+            self.ctx.draw.rectangle([0, 0, 127, 127], fill=(0, 0, 0))
+        except Exception:
+            pass
+        # Draw message box
+        self.ctx.draw.rectangle([10, 50, 118, 78], fill="#444444")
+        try:
+            text_width = self.ctx.fonts['default'].getbbox(text)[2]
+        except Exception:
+            text_width = len(text) * 6
+        text_x = max(12, (128 - text_width) // 2)
+        self.ctx.draw.text((text_x, 56), text, fill="#FFFFFF", font=self.ctx.fonts.get('default'))
+        self.persist_base_frame()
+
+    def close(self):
+        # Restore by re-persisting the base frame (background loop will redraw)
+        self.persist_base_frame()
+
+
 class YesNoDialog(BaseWidget):
     """Yes/No confirmation dialog widget."""
     
@@ -463,8 +487,6 @@ class ColorPicker(ValuePickerWidget):
 class NumericPicker(ValuePickerWidget):
     """Generic numeric value picker for selecting an integer within a range.
 
-    Similar visual style to `IpValuePicker`, but configurable min/max and step sizes.
-
     Controls:
       KEY_UP_PIN / KEY_DOWN_PIN : increment / decrement by `step`
       KEY1_PIN / KEY3_PIN       : increment / decrement by `fast_step` (default 5 * step)
@@ -558,11 +580,7 @@ class NumericPicker(ValuePickerWidget):
 
 
 class FileExplorer(BaseWidget):
-    """Simple scrollable file/directory explorer widget.
-
-    Removed implicit confirmation step; callers now decide whether to prompt
-    after a file selection by invoking yn_dialog or similar helpers.
-    """
+    """Simple scrollable file/directory explorer widget."""
 
     def show(self, start_path: str = "/", extensions: str = "") -> str:
         """Run the explorer interaction.
@@ -683,6 +701,21 @@ def numeric_picker(context: WidgetContext, label: str = "VAL", min_value: int = 
 def display_scrollable_info(context: WidgetContext, lines: List[str], title: str = "Info"):
     """Display scrollable information text."""
     ScrollableText(context).show(lines, title=title)
+
+
+def dialog_wait(context: WidgetContext, text: str = "Please wait..."):
+    """Show a non-blocking waiting overlay. Returns a handle (WaitingDialog instance)."""
+    dlg = WaitingDialog(context)
+    dlg.show(text)
+    return dlg
+
+
+def dialog_wait_close(context: WidgetContext, handle):
+    """Close a previously opened waiting overlay (handle returned by dialog_wait)."""
+    try:
+        handle.close()
+    except Exception:
+        pass
 
 def explorer(context: WidgetContext, path: str = "/", extensions: str = "") -> str:
     """Show a file explorer and return the selected file path or empty string.
