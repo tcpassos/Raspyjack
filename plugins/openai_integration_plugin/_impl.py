@@ -133,7 +133,7 @@ class OpenAIIntegrationPlugin(Plugin):
         wctx = self.ctx.get('widget_context') if self.ctx else None
         if not wctx:
             return
-        from ui.widgets import explorer, dialog_info, scrollable_text
+        from ui.widgets import explorer, dialog_info, scrollable_text_lines
         import os
         # Root path resolution centralized
         root_path = self._get_root_path()
@@ -178,7 +178,7 @@ class OpenAIIntegrationPlugin(Plugin):
 
         # Feedback & display
         dialog_info(wctx, f"Prompt: {prompt_base}\nSaved: {out_name}", wait=True, center=True)
-        scrollable_text(wctx, lines=ai_result.splitlines(), title="AI Analysis")
+        scrollable_text_lines(wctx, lines=ai_result.splitlines(), title="AI Analysis")
 
     def _menu_show_last_ai_report(self):
         """Open the most recently saved AI report (loot/AI/ai_*.txt)."""
@@ -206,16 +206,12 @@ class OpenAIIntegrationPlugin(Plugin):
         print(f"[DEBUG] Latest AI report: {latest}")
         # Show using existing scrollable file viewer
         try:
-            scrollable_text(wctx, latest, title="Last AI Report")
-        except Exception:
-            # Fallback: read manually
-            try:
-                with open(latest, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read().splitlines()
-                from ui.widgets import scrollable_text
-                scrollable_text(wctx, content, title="Last AI Report")
-            except Exception as e:
-                dialog_info(wctx, f"Error opening report:\n{str(e)[:18]}", wait=True, center=True)
+            with open(latest, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            scrollable_text(wctx, content, title="Last AI Report")
+        except Exception as e:
+            print(f"[{self.name}] Error reading last AI report: {e}")
+            dialog_info(wctx, f"Error opening report:\n{str(e)[:18]}", wait=True, center=True)
 
     def provide_menu_items(self):
         items = []
@@ -239,7 +235,7 @@ class OpenAIIntegrationPlugin(Plugin):
         wctx = self.ctx.get('widget_context') if self.ctx else None
         if not wctx:
             return
-        from ui.widgets import dialog_info, yn_dialog, scrollable_text
+        from ui.widgets import dialog_info, yn_dialog, scrollable_text_lines
         import os
         # Read scan file
         try:
@@ -271,7 +267,7 @@ class OpenAIIntegrationPlugin(Plugin):
             dialog_info(wctx, f"Error saving AI analysis: {e}", wait=True, center=True)
             return
         if yn_dialog(wctx, question="Open AI analysis?", yes_text="Yes", no_text="No", second_line=out_name):
-            scrollable_text(wctx, out_path, title=f"AI Analysis ({prompt_base})")
+            scrollable_text_lines(wctx, out_path, title=f"AI Analysis ({prompt_base})")
 
     def get_info(self):
         lines = [
