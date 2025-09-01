@@ -286,7 +286,7 @@ class YesNoDialog(BaseWidget):
             time.sleep(0.1)
 
 
-class ScrollableText(BaseWidget):
+class ScrollableTextLines(BaseWidget):
     """Scrollable text display widget."""
     
     def show(self, lines: List[str], title: str = "", wrap_width: int = 22):
@@ -365,6 +365,80 @@ class ScrollableText(BaseWidget):
             elif btn in ("KEY_LEFT_PIN", "KEY3_PIN", "KEY_PRESS_PIN"):
                 return  # Exit
 
+
+class ScrollableText(BaseWidget):
+    """Simple vertical scroll text viewer without selection highlight.
+
+    Now accepts a single text string. Internal wrapping splits on newlines first
+    and then wraps each paragraph line to the specified width.
+
+    Controls:
+      KEY_UP_PIN / KEY_DOWN_PIN : Scroll one line up/down
+      KEY_LEFT_PIN / KEY3_PIN / KEY_PRESS_PIN : Exit viewer
+    """
+    def show(self, text: str, title: str = "", wrap_width: int = 22):
+        # Split into raw lines first, preserve empty lines
+        raw_lines = text.split('\n') if text else [""]
+        wrapped: List[str] = []
+        for line in raw_lines:
+            if not line.strip():
+                wrapped.append("")
+            else:
+                segs = textwrap.wrap(line, width=wrap_width, replace_whitespace=False, drop_whitespace=False)
+                wrapped.extend(segs if segs else [""])
+        if not wrapped:
+            wrapped = ["(no content)"]
+
+        WINDOW = 7
+        top_index = 0
+        total = len(wrapped)
+
+        while True:
+            if top_index < 0:
+                top_index = 0
+            if top_index > max(0, total - WINDOW):
+                top_index = max(0, total - WINDOW)
+
+            view = wrapped[top_index: top_index + WINDOW]
+            self.ctx.color.draw_menu_background()
+            if title:
+                self.ctx.draw.text((5, 15), title, fill=self.ctx.color.selected_text, font=self.ctx.fonts.get('default'))
+                start_y = 30
+            else:
+                start_y = self.ctx.default.start_text[1]
+
+            for i, line in enumerate(view):
+                self.ctx.draw.text((self.ctx.default.start_text[0], start_y + self.ctx.default.text_gap * i),
+                                   line,
+                                   font=self.ctx.fonts.get('default'),
+                                   fill=self.ctx.color.text)
+
+            # Scroll position indicator (small bar right edge)
+            try:
+                if total > WINDOW:
+                    bar_height = 40
+                    track_top = start_y
+                    track_bottom = start_y + self.ctx.default.text_gap * (WINDOW - 1)
+                    track_height = track_bottom - track_top + 10
+                    # Scale position
+                    frac = top_index / (total - WINDOW)
+                    bar_y = int(track_top + frac * (track_height - bar_height))
+                    self.ctx.draw.rectangle((122, bar_y, 125, bar_y + bar_height), fill=self.ctx.color.select)
+            except Exception:
+                pass
+
+            self.update_display()
+            time.sleep(0.12)
+
+            btn = self.ctx.get_button()
+            if btn == "KEY_DOWN_PIN":
+                if top_index < total - WINDOW:
+                    top_index += 1
+            elif btn == "KEY_UP_PIN":
+                if top_index > 0:
+                    top_index -= 1
+            elif btn in ("KEY_LEFT_PIN", "KEY3_PIN", "KEY_PRESS_PIN"):
+                return
 
 class IpValuePicker(ValuePickerWidget):
     """IP value picker widget for selecting a single IP octet (0-255)."""
@@ -698,9 +772,9 @@ def numeric_picker(context: WidgetContext, label: str = "VAL", min_value: int = 
     return NumericPicker(context).show(label=label, min_value=min_value, max_value=max_value,
                                        initial_value=initial_value, step=step, fast_step=fast_step)
 
-def scrollable_text(context: WidgetContext, lines: List[str], title: str = "Info"):
+def scrollable_text_lines(context: WidgetContext, lines: List[str], title: str = "Info"):
     """Display scrollable information text."""
-    ScrollableText(context).show(lines, title=title)
+    ScrollableTextLines(context).show(lines, title=title)
 
 
 def dialog_wait(context: WidgetContext, text: str = "Please wait..."):
@@ -727,9 +801,13 @@ def browse_images(context: WidgetContext, start_path: str = "/root/", extensions
     """Convenience wrapper that creates an ImageBrowser and displays images."""
     ImageBrowser(context).show(start_path=start_path, extensions=extensions)
 
+def scrollable_text(context: WidgetContext, text: str, title: str = "Info"):
+    """Display scrollable text without selection highlight."""
+    ScrollableText(context).show(text, title=title)
+
 __all__ = [
     'WidgetContext', 'BaseWidget', 'ValuePickerWidget', 'Dialog', 'InfoDialog', 'YesNoDialog', 
-    'ScrollableText', 'IpValuePicker', 'ColorPicker', 'NumericPicker',
+    'ScrollableTextLines', 'IpValuePicker', 'ColorPicker', 'NumericPicker',
     'dialog', 'dialog_info', 'yn_dialog', 'ip_value_picker', 'color_picker', 'numeric_picker',
-    'scrollable_text', 'FileExplorer', 'explorer', 'ImageBrowser', 'browse_images'
+    'scrollable_text_lines', 'FileExplorer', 'explorer', 'ImageBrowser', 'browse_images', 'ScrollableText', 'scrollable_text'
 ]
