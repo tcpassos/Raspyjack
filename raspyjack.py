@@ -19,7 +19,7 @@ from ui.widgets import (
     yn_dialog,
     ip_value_picker,
     color_picker,
-    display_scrollable_info,
+    scrollable_text,
     explorer,
     browse_images,
 )
@@ -448,7 +448,7 @@ def _browse_and_show_text_files(base_subpath: str, extensions: str, title: str):
         try:
             with open(rfile, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read().splitlines()
-            display_scrollable_info(_widget_context, content, title=title)
+            scrollable_text(_widget_context, content, title=title)
         except Exception as e:
             dialog_info(_widget_context, f"Error reading file:\n{e}", wait=True)
 
@@ -507,7 +507,7 @@ def show_info():
     except Exception as e:
         info_lines = ["Network Error", f"Details: {str(e)[:15]}..."]
     
-    display_scrollable_info(_widget_context, info_lines, title="Network Info")
+    scrollable_text(_widget_context, info_lines, title="Network Info")
 
 WAIT_TXT = "Scan in progress..."
 
@@ -804,7 +804,7 @@ def show_interface_info_action():
             except:
                 pass
         # Show using scrollable widget
-        display_scrollable_info(_widget_context, info_lines, title="Interface Info")
+        scrollable_text(_widget_context, info_lines, title="Interface Info")
     except Exception as e:
         dialog_info(_widget_context, f"Interface Info Error\n{str(e)[:20]}", wait=True)
 
@@ -877,7 +877,7 @@ def show_routing_status():
                 f"RaspyJack uses: {current_interface}",
             ]
         # Show using scrollable widget
-        display_scrollable_info(_widget_context, info_lines, title="Routing Status")
+        scrollable_text(_widget_context, info_lines, title="Routing Status")
     except Exception as e:
         dialog_info(_widget_context, f"Routing Error\n{str(e)[:20]}", wait=True)
 
@@ -1188,7 +1188,7 @@ class MenuManager:
                             info = _plugin_manager.get_plugin_info(pname)
                             if info:
                                 lines = info.split('\n') if '\n' in info else [info]
-                                display_scrollable_info(_widget_context, lines, title=f"{pname} Info")
+                                scrollable_text(_widget_context, lines, title=f"{pname} Info")
                             else:
                                 dialog_info(_widget_context, f"No info available\nfor {pname}", wait=True)
                         else:

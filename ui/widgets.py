@@ -698,7 +698,7 @@ def numeric_picker(context: WidgetContext, label: str = "VAL", min_value: int = 
     return NumericPicker(context).show(label=label, min_value=min_value, max_value=max_value,
                                        initial_value=initial_value, step=step, fast_step=fast_step)
 
-def display_scrollable_info(context: WidgetContext, lines: List[str], title: str = "Info"):
+def scrollable_text(context: WidgetContext, lines: List[str], title: str = "Info"):
     """Display scrollable information text."""
     ScrollableText(context).show(lines, title=title)
 
@@ -731,5 +731,5 @@ __all__ = [
     'WidgetContext', 'BaseWidget', 'ValuePickerWidget', 'Dialog', 'InfoDialog', 'YesNoDialog', 
     'ScrollableText', 'IpValuePicker', 'ColorPicker', 'NumericPicker',
     'dialog', 'dialog_info', 'yn_dialog', 'ip_value_picker', 'color_picker', 'numeric_picker',
-    'display_scrollable_info', 'FileExplorer', 'explorer', 'ImageBrowser', 'browse_images'
+    'scrollable_text', 'FileExplorer', 'explorer', 'ImageBrowser', 'browse_images'
 ]
