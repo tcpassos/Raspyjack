@@ -28,7 +28,6 @@ def get_discord_webhook_url():
                     
                     # Check if it's a valid webhook URL
                     if webhook_url.startswith("https://discord.com/api/webhooks/"):
-                        print(f"[DiscordNotifier] Found webhook URL.")
                         return webhook_url
     except Exception as e:
         print(f"[DiscordNotifier] Error reading Discord webhook: {e}")

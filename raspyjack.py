@@ -2,13 +2,13 @@
 
 import os
 import subprocess
-import netifaces
+import netifaces # type: ignore
 from datetime import datetime
 import threading, time, json
 from PIL import Image, ImageDraw, ImageFont
 import LCD_Config
 import LCD_1in44
-import RPi.GPIO as GPIO
+import RPi.GPIO as GPIO # type: ignore
 from functools import partial
 import time
 import sys
