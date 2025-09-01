@@ -775,48 +775,98 @@ class Menu:
             marquee_thread = threading.Thread(target=_marquee_thread, daemon=True)
             marquee_thread.start()
 
-        while self.running:
-            self.render()  # ensures frame drawn at loop start (selection changes etc.)
+        last_nav_time = 0.0
+        accelerating = False
 
-            button = self.ctx.get_button()
-            
-            # Handle custom buttons first
-            if button in custom_handlers:
+        from input_events import clear_button_events as _clear_events
+        pending_left_right_press = None  # track initial press for left/right
+        while self.running:
+            self.render()
+            evt = self.ctx.get_button_event(timeout=0.25)
+            if not evt:
+                continue
+            etype = evt.get('type')
+            button = evt.get('button')
+
+            # Acceleration only for vertical navigation
+            if etype == "LONG_PRESS" and button in ("KEY_UP_PIN", "KEY_DOWN_PIN"):
+                accelerating = True
+                last_nav_time = time.time()
+                if button == "KEY_UP_PIN":
+                    self.navigate_up()
+                elif button == "KEY_DOWN_PIN":
+                    self.navigate_down()
+                continue
+            if accelerating and etype == "REPEAT" and button in ("KEY_UP_PIN", "KEY_DOWN_PIN"):
+                now = time.time()
+                if now - last_nav_time >= 0.05:
+                    last_nav_time = now
+                    if button == "KEY_UP_PIN":
+                        self.navigate_up()
+                    else:
+                        self.navigate_down()
+                continue
+
+            # LEFT/RIGHT should act only on release (debounce repeats)
+            if button in ("KEY_LEFT_PIN", "KEY_RIGHT_PIN"):
+                if etype == "PRESS":
+                    pending_left_right_press = button
+                    continue
+                if etype == "RELEASE" and pending_left_right_press == button:
+                    # treat release as action
+                    if button == "KEY_LEFT_PIN":
+                        # Exit only for list renderer; otherwise navigate
+                        if isinstance(self.renderer, ListRenderer) and "KEY_LEFT_PIN" in exit_keys:
+                            self.running = False
+                            return None
+                        else:
+                            self.navigate_left()
+                    else:  # RIGHT
+                        if isinstance(self.renderer, ListRenderer):
+                            action = self.select_current()
+                            if action is not None:
+                                # Flush any queued events before returning
+                                _clear_events()
+                                self.running = False
+                                return action
+                        else:
+                            self.navigate_right()
+                    pending_left_right_press = None
+                # ignore REPEAT / LONG_PRESS for left/right
+                continue
+
+            # Handle vertical navigation on PRESS/REPEAT only
+            if button in ("KEY_UP_PIN", "KEY_DOWN_PIN"):
+                if etype in ("PRESS",):
+                    if button == "KEY_UP_PIN":
+                        self.navigate_up()
+                    else:
+                        self.navigate_down()
+                # REPEAT handled in acceleration block
+                continue
+
+            # Selection / exit actions on RELEASE to avoid repeats during holds
+            if button == "KEY_PRESS_PIN":
+                if etype == "RELEASE":
+                    action = self.select_current()
+                    if action is not None:
+                        _clear_events()
+                        self.running = False
+                        return action
+                continue
+
+            if button in exit_keys and etype == "RELEASE":
+                self.running = False
+                return None
+
+            # Custom handlers trigger on RELEASE
+            if button in custom_handlers and etype == "RELEASE":
                 result = custom_handlers[button]()
                 if result is not None:
+                    _clear_events()
                     self.running = False
                     return result
                 continue
-            
-            # Standard navigation
-            if button == "KEY_UP_PIN":
-                self.navigate_up()
-            elif button == "KEY_DOWN_PIN":
-                self.navigate_down()
-            elif button == "KEY_LEFT_PIN":
-                if "KEY_LEFT_PIN" in exit_keys:
-                    self.running = False
-                    return None
-                self.navigate_left()
-            elif button == "KEY_RIGHT_PIN":
-                # In list view, treat RIGHT as a quick select
-                if isinstance(self.renderer, ListRenderer):
-                    action = self.select_current()
-                    if action is not None:
-                        self.running = False
-                        return action
-                else:
-                    self.navigate_right()
-            elif button == "KEY_PRESS_PIN":
-                action = self.select_current()
-                # Only exit if the action is not None.
-                # This allows for non-selectable menu items (action=None)
-                if action is not None:
-                    self.running = False
-                    return action
-            elif button in exit_keys:
-                self.running = False
-                return None
         
         # Stop marquee thread
         marquee_stop.set()

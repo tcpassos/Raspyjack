@@ -12,14 +12,14 @@ Key Concepts:
   * Keep every hook non‑blocking; long operations should spawn threads.
 
 Lifecycle Hooks (all optional):
-  on_load(ctx)                 - Called once after load
-  on_unload()                 - Called before plugin manager shutdown/reload
-  on_tick(dt)                 - Called periodically (~every 0.5s by default)
-  on_button(name)             - Called for button events
-  on_render_overlay(image, draw) - Draw lightweight overlay elements
-  on_before_exec_payload(name) - Before starting a payload
-  on_after_exec_payload(name, success) - After payload completes
-  on_before_scan(label, args) - Before starting an Nmap scan
+  on_load(ctx)                            - Called once after load
+  on_unload()                             - Called before plugin manager shutdown/reload
+  on_tick(dt)                             - Called periodically (~every 0.5s by default)
+  on_button_event(event)                  - React to button events (new preferred method)
+  on_render_overlay(image, draw)          - Draw lightweight overlay elements
+  on_before_exec_payload(name)            - Before starting a payload
+  on_after_exec_payload(name, success)    - After payload completes
+  on_before_scan(label, args)             - Before starting an Nmap scan
   on_after_scan(label, args, result_path) - After scan finishes
 
 Configuration Schema:
@@ -113,10 +113,9 @@ class ExamplePlugin(Plugin):
             self._last_tick = now
             self._counter += 1
 
-    def on_button(self, name: str) -> None:
-        # Respond to a button press (for demonstration we just log)
+    def on_button_event(self, event: dict) -> None:
         if self.get_config_value("enable_runtime_feature", True):
-            print(f"[{self.name}] Button pressed: {name}")
+            print(f"[{self.name}] Button event {event.get('type')}: {event.get('button')}")
 
     def on_render_overlay(self, image, draw) -> None:
         # Draw a very small HUD element (avoid overlapping other plugins if possible)
@@ -160,7 +159,7 @@ class ExamplePlugin(Plugin):
             f"Counter: {self._counter}",
             f"Runtime Feature: {'ON' if self._enabled_runtime_feature else 'OFF'}",
             f"Show Counter HUD: {'ON' if self.get_config_value('show_counter', True) else 'OFF'}",
-            "Hooks Implemented: tick, button, render_overlay, scan, payload",
+            "Hooks Implemented: tick, button_event, render_overlay, scan, payload",
             "Try toggling options in the Plugins > example_plugin menu.",
         ])
 

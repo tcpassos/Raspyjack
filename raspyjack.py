@@ -27,6 +27,7 @@ from ui.status_bar import StatusBar
 from ui.color_scheme import ColorScheme
 from ui.menu import Menu, MenuItem, CheckboxMenuItem, ListRenderer, GridRenderer, CarouselRenderer
 from ui.framebuffer import fb
+from input_events import init_button_events, get_button_event as _evt_get_button_event
 
 # https://www.waveshare.com/wiki/File:1.44inch-LCD-HAT-Code.7z
 
@@ -203,19 +204,12 @@ def get_button():
                         _button_last_time[item] = now_t
                         _button_prev[item] = val
                         if '_plugin_manager' in globals() and _plugin_manager is not None:
-                            try:
-                                _plugin_manager.dispatch_button(item)
-                            except Exception:
-                                pass
+                            pass  # Legacy dispatch removed (event manager handles PRESS)
                         return item
                 _button_prev[item] = val
             else:
                 if val == 0:
-                    if '_plugin_manager' in globals() and _plugin_manager is not None:
-                        try:
-                            _plugin_manager.dispatch_button(item)
-                        except Exception:
-                            pass
+                    # Legacy immediate dispatch removed
                     return item
         time.sleep(0.01)
 
@@ -239,10 +233,7 @@ def get_button_no_edge():
                 if (now_t - last_t) >= _DEBOUNCE_INTERVAL:
                     _button_last_time[item] = now_t
                     if '_plugin_manager' in globals() and _plugin_manager is not None:
-                        try:
-                            _plugin_manager.dispatch_button(item)
-                        except Exception:
-                            pass
+                        pass  # Event manager provides continuous events
                     return item
         time.sleep(0.01)
 
@@ -367,6 +358,7 @@ def reload_plugins():
         'emit_event': None,
         'subscribe_event': None,
         'defaults': None,
+        'get_button_event': _evt_get_button_event,
     }
     _plugin_manager = _rt_reload_plugins(_plugin_manager, default.install_path, ctx)
 
@@ -1396,14 +1388,18 @@ def main():
     Initializes hardware, starts background threads, and runs the menu system.
     """
     global _widget_context
+    # Initialize high-level button event manager (non-blocking)
+    try:
+        init_button_events(gpio_config.pins, _stop_evt, plugin_dispatch=getattr(_plugin_manager, 'dispatch_button_event', None))
+    except Exception as _iexc:
+        print(f"[INPUT_EVENTS] Failed to init manager: {_iexc}")
     
     _widget_context = WidgetContext(
         draw=draw,
         lcd=LCD,
         image=image,
         color_scheme=color,
-        get_button_func=get_button,
-        get_button_raw_func=get_button_no_edge,
+        get_button_event_func=_evt_get_button_event,
         fonts={'default': text_font, 'icon': icon_font},
         default_settings=default,
         status_bar=status_bar,

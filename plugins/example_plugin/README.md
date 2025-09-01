@@ -52,7 +52,7 @@ You can safely hand‑edit `priority` and `enabled`. Options should usually be t
 | `on_load(ctx)` | Initialize resources. `ctx` provides helpers (payload execution, status bar, drawing access, etc.). |
 | `on_unload()` | Clean up resources, close files, stop threads. |
 | `on_tick(dt)` | Periodic lightweight updates. Avoid blocking. |
-| `on_button(name)` | React to hardware button presses. |
+| `on_button_event(event)` | React to high-level button events (PRESS, LONG_PRESS, CLICK, etc.). |
 | `on_render_overlay(image, draw)` | Draw small overlay elements (text/icon). Do not clear whole screen. |
 | `on_before_exec_payload(name)` | Called before a payload is executed. |
 | `on_after_exec_payload(name, success)` | After payload completion. |

@@ -31,9 +31,12 @@ Life‑cycle / callback methods (all optional):
         Called periodically from the stats loop (roughly every cycle). Use this
         for polling hardware or timers. Keep it short (non‑blocking!).
 
-    on_button(name: str) -> None
-        Invoked whenever a physical button is pressed. `name` is the key in
-        PINS (e.g. "KEY_UP_PIN").
+    on_button_event(event: dict) -> None
+        New pattern: receives a dictionary with keys:
+            type   -> 'PRESS','RELEASE','CLICK','DOUBLE_CLICK','LONG_PRESS','REPEAT'
+            button -> logical name (e.g. 'KEY_UP_PIN')
+            ts     -> monotonic timestamp
+            count  -> optional (multi-click)
 
     on_render_overlay(image, draw) -> None
         Gives a chance to draw on the current PIL image right before it is
@@ -109,7 +112,7 @@ class Plugin:
 
     # --- Event hooks ------------------------------------------------------
     def on_tick(self, dt: float) -> None: ...
-    def on_button(self, name: str) -> None: ...
+    def on_button_event(self, event: dict) -> None: ...
     def on_render_overlay(self, image, draw) -> None: ...
     def on_before_exec_payload(self, payload_name: str) -> None: ...
     def on_after_exec_payload(self, payload_name: str, success: bool) -> None: ...
@@ -452,13 +455,14 @@ class PluginManager:
                 except Exception:
                     self._log(f"[PLUGIN] tick error in {lp.instance.name}")
 
-    def dispatch_button(self, name: str) -> None:
+    def dispatch_button_event(self, event: dict) -> None:
+        """Dispatch a rich button event (PRESS, RELEASE, LONG_PRESS, etc.)."""
         with self._lock:
             for lp in self._loaded:
                 try:
-                    lp.instance.on_button(name)
+                    lp.instance.on_button_event(event)
                 except Exception:
-                    self._log(f"[PLUGIN] button error in {lp.instance.name}")
+                    self._log(f"[PLUGIN] button_event error in {lp.instance.name}")
 
     def dispatch_render_overlay(self, image, draw) -> None:
         # This remains for legacy direct rendering paths; prefer overlay snapshot methods.

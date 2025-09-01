@@ -463,12 +463,18 @@ def on_tick(self, dt: float) -> None:
     self.counter += dt
 ```
 
-### Hardware Interaction
+### Hardware Interaction (New pattern)
 ```python
-def on_button(self, name: str) -> None:
-    """Called when physical button is pressed"""
-    if name == "KEY_UP_PIN":
-        print("UP button pressed!")
+def on_button_event(self, event: dict) -> None:
+    """High-level button event.
+    event keys: type ('PRESS','LONG_PRESS','REPEAT','CLICK',etc.), button, ts, count(optional)
+    """
+    if event['type'] == 'PRESS' and event['button'] == 'KEY_UP_PIN':
+        print("UP pressed (PRESS)")
+    if event['type'] == 'LONG_PRESS' and event['button'] == 'KEY_UP_PIN':
+        print("UP long press!")
+    if event['type'] == 'DOUBLE_CLICK' and event['button'] == 'KEY_PRESS_PIN':
+        print("Select double click")
 ```
 
 ### Rendering

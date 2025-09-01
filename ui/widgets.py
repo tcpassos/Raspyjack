@@ -11,6 +11,11 @@ import textwrap
 from typing import List, Any, Dict
 import os
 try:
+    from input_events import clear_button_events
+except Exception:
+    def clear_button_events():
+        return None
+try:
     from ui.framebuffer import fb
 except Exception:
     fb = None
@@ -18,33 +23,21 @@ from gpio_config import gpio_config
 
 
 class WidgetContext:
-    """Context object that aggregates dependencies required by widgets.
-
-    Args:
-        draw: PIL.ImageDraw drawing object used for rendering.
-        lcd: LCD driver instance.
-        image: Base PIL.Image buffer representing the current frame.
-        color_scheme: Color scheme / drawing helpers object.
-        get_button_func: Default (edge-detected) button reader function.
-        get_button_raw_func: Optional raw level button reader for continuous repeat.
-        fonts: Dictionary of font objects.
-        default_settings: Layout/default configuration object.
-        status_bar: Optional status bar instance.
-        plugin_manager: Optional reference to the plugin manager.
-    """
-    def __init__(self, draw, lcd, image, color_scheme, get_button_func, get_button_raw_func,
-                 fonts: Dict[str, Any], default_settings=None, status_bar=None, plugin_manager=None):
+    """Context object aggregating dependencies required by widgets"""
+    def __init__(self, draw, lcd, image, color_scheme,
+                 get_button_event_func,
+                 fonts: Dict[str, Any], default_settings=None,
+                 status_bar=None, plugin_manager=None):
         self.draw = draw
-        self.lcd = lcd  
+        self.lcd = lcd
         self.image = image
         self.color = color_scheme
-        self.get_button = get_button_func
-        self.get_button_raw = get_button_raw_func
         self.fonts = fonts
         self.default = default_settings or self._create_default_settings()
         self.status_bar = status_bar
         self.plugin_manager = plugin_manager
         self.fb = fb
+        self.get_button_event = get_button_event_func or (lambda timeout=None: None)
     
     def _create_default_settings(self):
         """Create default settings if none provided."""
@@ -180,7 +173,12 @@ class Dialog(BaseWidget):
         
         if wait:
             time.sleep(0.25)
-            self.ctx.get_button()
+            # Wait for a button PRESS-like event before closing (any button)
+            while True:
+                evt = self.ctx.get_button_event(timeout=0.5)
+                if evt and evt.get('type') in ('PRESS','CLICK','DOUBLE_CLICK'):
+                    break
+            clear_button_events()
 
 
 class InfoDialog(BaseWidget):
@@ -213,6 +211,7 @@ class InfoDialog(BaseWidget):
         self.update_display()
         if wait:
             time.sleep(timeout)
+            clear_button_events()
 
 
 class WaitingDialog(BaseWidget):
@@ -237,6 +236,7 @@ class WaitingDialog(BaseWidget):
     def close(self):
         # Restore by re-persisting the base frame (background loop will redraw)
         self.persist_base_frame()
+        clear_button_events()
 
 
 class YesNoDialog(BaseWidget):
@@ -286,7 +286,12 @@ class YesNoDialog(BaseWidget):
             
             self.update_display()
 
-            button = self.ctx.get_button()
+            # Event-driven input
+            evt = self.ctx.get_button_event(timeout=0.5)
+            if not evt or evt.get('type') not in ('PRESS','CLICK','DOUBLE_CLICK'):
+                time.sleep(0.05)
+                continue
+            button = evt.get('button')
             
             # Handle button input - use pin names from gpio_config
             if button in ["KEY_LEFT_PIN", "KEY1_PIN"]:
@@ -294,6 +299,7 @@ class YesNoDialog(BaseWidget):
             elif button in ["KEY_RIGHT_PIN", "KEY3_PIN"]:
                 answer_yes = False
             elif button in ["KEY2_PIN", "KEY_PRESS_PIN"]:
+                clear_button_events()
                 return answer_yes
             
             time.sleep(0.1)
@@ -304,79 +310,66 @@ class ScrollableTextLines(BaseWidget):
     
     def show(self, lines: List[str], title: str = "", wrap_width: int = 22):
         """Display scrollable text with automatic line wrapping."""
-        
         # Wrap long lines
         wrapped_lines = []
         for line in lines:
             if not line.strip():
                 wrapped_lines.append('')
             else:
-                wrapped = textwrap.wrap(line, width=wrap_width, 
-                                      replace_whitespace=False, drop_whitespace=False)
+                wrapped = textwrap.wrap(line, width=wrap_width,
+                                        replace_whitespace=False, drop_whitespace=False)
                 wrapped_lines.extend(wrapped if wrapped else [''])
-        
+
         if not wrapped_lines:
             wrapped_lines = ["No content to display"]
-        
-        WINDOW = 7  # lines visible simultaneously
-        total = len(wrapped_lines)
-        index = 0   # current position
-        offset = 0  # window offset
 
+        WINDOW = 7
+        total = len(wrapped_lines)
+        index = 0
+        offset = 0
         while True:
-            # Calculate window for scrolling
             if index < offset:
                 offset = index
             elif index >= offset + WINDOW:
                 offset = index - WINDOW + 1
 
-            # Get visible window
             window = wrapped_lines[offset:offset + WINDOW]
-
-            # Draw display
             self.ctx.color.draw_menu_background()
-            
-            # Draw title if provided
             if title:
-                self.ctx.draw.text((5, 15), title, fill=self.ctx.color.selected_text, 
-                                  font=self.ctx.fonts.get('default'))
+                self.ctx.draw.text((5, 15), title, fill=self.ctx.color.selected_text,
+                                   font=self.ctx.fonts.get('default'))
                 start_y = 30
             else:
                 start_y = self.ctx.default.start_text[1]
-            
+
             for i, line in enumerate(window):
-                fill = self.ctx.color.selected_text if i == (index - offset) else self.ctx.color.text
-                
-                # Highlight current line
-                if i == (index - offset):
-                    self.ctx.draw.rectangle(
-                        (self.ctx.default.start_text[0] - 5,
-                         start_y + self.ctx.default.text_gap * i,
-                         120,
-                         start_y + self.ctx.default.text_gap * i + 10),
-                        fill=self.ctx.color.select
-                    )
-                
-                # Draw the text
-                self.ctx.draw.text(
-                    (self.ctx.default.start_text[0],
-                     start_y + self.ctx.default.text_gap * i),
-                    line,
-                    font=self.ctx.fonts.get('default'),
-                    fill=fill
-                )
+                is_selected = (i == (index - offset))
+                if is_selected:
+                    self.ctx.draw.rectangle((self.ctx.default.start_text[0] - 5,
+                                             start_y + self.ctx.default.text_gap * i,
+                                             120,
+                                             start_y + self.ctx.default.text_gap * i + 10),
+                                            fill=self.ctx.color.select)
+                self.ctx.draw.text((self.ctx.default.start_text[0],
+                                    start_y + self.ctx.default.text_gap * i),
+                                   line,
+                                   font=self.ctx.fonts.get('default'),
+                                   fill=self.ctx.color.selected_text if is_selected else self.ctx.color.text)
 
             self.update_display()
-            time.sleep(0.12)
-
-            # Handle button input
-            btn = self.ctx.get_button()
-            if btn == "KEY_DOWN_PIN":
-                index = (index + 1) % total  # wrap to beginning
-            elif btn == "KEY_UP_PIN":
-                index = (index - 1) % total  # wrap to end
-            elif btn in ("KEY_LEFT_PIN", "KEY3_PIN", "KEY_PRESS_PIN"):
-                return  # Exit
+            evt = self.ctx.get_button_event(timeout=0.5)
+            if not evt:
+                continue
+            etype = evt.get('type')
+            btn = evt.get('button')
+            if etype not in ('PRESS', 'REPEAT', 'LONG_PRESS'):
+                continue
+            if btn == 'KEY_DOWN_PIN':
+                index = (index + 1) % total
+            elif btn == 'KEY_UP_PIN':
+                index = (index - 1) % total
+            elif btn in ('KEY_LEFT_PIN', 'KEY3_PIN', 'KEY_PRESS_PIN'):
+                return
 
 
 class ScrollableText(BaseWidget):
@@ -390,7 +383,6 @@ class ScrollableText(BaseWidget):
       KEY_LEFT_PIN / KEY3_PIN / KEY_PRESS_PIN : Exit viewer
     """
     def show(self, text: str, title: str = "", wrap_width: int = 22):
-        # Split into raw lines first, preserve empty lines
         raw_lines = text.split('\n') if text else [""]
         wrapped: List[str] = []
         for line in raw_lines:
@@ -405,7 +397,6 @@ class ScrollableText(BaseWidget):
         WINDOW = 7
         top_index = 0
         total = len(wrapped)
-
         while True:
             if top_index < 0:
                 top_index = 0
@@ -426,14 +417,12 @@ class ScrollableText(BaseWidget):
                                    font=self.ctx.fonts.get('default'),
                                    fill=self.ctx.color.text)
 
-            # Scroll position indicator (small bar right edge)
             try:
                 if total > WINDOW:
                     bar_height = 40
                     track_top = start_y
                     track_bottom = start_y + self.ctx.default.text_gap * (WINDOW - 1)
                     track_height = track_bottom - track_top + 10
-                    # Scale position
                     frac = top_index / (total - WINDOW)
                     bar_y = int(track_top + frac * (track_height - bar_height))
                     self.ctx.draw.rectangle((122, bar_y, 125, bar_y + bar_height), fill=self.ctx.color.select)
@@ -441,16 +430,18 @@ class ScrollableText(BaseWidget):
                 pass
 
             self.update_display()
-            time.sleep(0.12)
-
-            btn = self.ctx.get_button_raw()
-            if btn == "KEY_DOWN_PIN":
-                if top_index < total - WINDOW:
-                    top_index += 1
-            elif btn == "KEY_UP_PIN":
-                if top_index > 0:
-                    top_index -= 1
-            elif btn in ("KEY_LEFT_PIN", "KEY3_PIN", "KEY_PRESS_PIN"):
+            evt = self.ctx.get_button_event(timeout=0.5)
+            if not evt:
+                continue
+            etype = evt.get('type')
+            btn = evt.get('button')
+            if etype not in ('PRESS', 'REPEAT', 'LONG_PRESS'):
+                continue
+            if btn == 'KEY_DOWN_PIN' and top_index < total - WINDOW:
+                top_index += 1
+            elif btn == 'KEY_UP_PIN' and top_index > 0:
+                top_index -= 1
+            elif btn in ('KEY_LEFT_PIN', 'KEY3_PIN', 'KEY_PRESS_PIN'):
                 return
 
 class IpValuePicker(ValuePickerWidget):
@@ -480,7 +471,11 @@ class IpValuePicker(ValuePickerWidget):
 
             self.update_display()
 
-            button = self.ctx.get_button()
+            # Event-driven
+            evt = self.ctx.get_button_event(timeout=0.5)
+            if not evt or evt.get('type') not in ('PRESS','REPEAT','CLICK','DOUBLE_CLICK'):
+                continue
+            button = evt.get('button')
             if button == "KEY_UP_PIN":
                 value = min(255, value + 1)
                 render_up = True
@@ -494,6 +489,7 @@ class IpValuePicker(ValuePickerWidget):
                 value = max(0, value - 5)
                 render_down = True
             elif button == "KEY_PRESS_PIN":
+                clear_button_events()
                 return value
 
             # Redraw with movement highlight
@@ -533,7 +529,10 @@ class ColorPicker(ValuePickerWidget):
             
             self.update_display()
 
-            button = self.ctx.get_button()
+            evt = self.ctx.get_button_event(timeout=0.5)
+            if not evt or evt.get('type') not in ('PRESS','REPEAT','CLICK','DOUBLE_CLICK'):
+                continue
+            button = evt.get('button')
             if button == "KEY_LEFT_PIN":
                 i_rgb = i_rgb - 1
                 time.sleep(0.1)
@@ -553,6 +552,7 @@ class ColorPicker(ValuePickerWidget):
                 desired_color[i_rgb] = desired_color[i_rgb] - 1
                 render_down = True
             elif button == "KEY_PRESS_PIN":
+                clear_button_events()
                 break
 
             if i_rgb > 2:
@@ -568,6 +568,7 @@ class ColorPicker(ValuePickerWidget):
             self._draw_up_down(desired_color[i_rgb],render_offset[i_rgb],render_up,render_down,(self.ctx.color.text, self.ctx.color.selected_text)[i_rgb == 0])
             self.update_display() # Update display after processing button
             time.sleep(0.1)
+        clear_button_events()
         return final_color
 
 
@@ -631,7 +632,10 @@ class NumericPicker(ValuePickerWidget):
 
             self.update_display()
 
-            button = self.ctx.get_button()
+            evt = self.ctx.get_button_event(timeout=0.5)
+            if not evt or evt.get('type') not in ('PRESS','REPEAT','CLICK','DOUBLE_CLICK'):
+                continue
+            button = evt.get('button')
             if button == "KEY_UP_PIN":
                 new_v = value + step
                 if new_v <= max_value:
@@ -657,6 +661,7 @@ class NumericPicker(ValuePickerWidget):
                     value = new_v
                 render_down = True
             elif button == "KEY_PRESS_PIN":
+                clear_button_events()
                 return value
 
             # Redraw highlight frame
@@ -750,7 +755,11 @@ class ImageBrowser(BaseWidget):
                     py = (LCD.height - img.height) // 2
                     canvas.paste(img, (px, py))
                     self.blit_full(canvas, with_status=False)
-                self.ctx.get_button()
+                # Wait for any button press before returning
+                while True:
+                    evt = self.ctx.get_button_event(timeout=0.5)
+                    if evt and evt.get('type') in ('PRESS','CLICK','DOUBLE_CLICK'):
+                        break
                 if status_was_visible and getattr(self.ctx, 'status_bar', None):
                     self.ctx.status_bar.show()
             except Exception as e:
