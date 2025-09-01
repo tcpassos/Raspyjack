@@ -1,0 +1,17 @@
+GOAL: Concise discovery & basic surface enumeration.
+
+OUTPUT STRUCTURE:
+HEADER: Hosts: <total_live>  OpenPorts: <sum_open>
+Then one block per host:
+IP: <ip>
+Ports: <port1/proto,port2/proto,...> (max 6 shown; use +N if truncated)
+Key: <short note on standout service (e.g. http, smb, ssh outdated, etc.)>
+
+RULES:
+- Only include live hosts.
+- Group ports by protocol implicitly (e.g. 22/tcp).
+- Prefer noteworthy ports/services (http, https, ssh, rdp, smb, ftp, database, proxy, vpn, mail) when selecting first 6.
+- Keep notes ultra brief; no full sentences.
+- No extraneous commentary outside defined structure.
+
+After all hosts add a FINAL line if any truncated: Note: some hosts truncated.

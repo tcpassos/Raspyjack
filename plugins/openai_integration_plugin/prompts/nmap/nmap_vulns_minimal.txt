@@ -1,0 +1,10 @@
+GOAL: Tiny list of confirmed/high-prob vulnerabilities.
+
+FORMAT:
+<ip> <svc/port>: <vuln_id_or_keyword>
+
+RULES:
+- One line per vuln finding (deduplicate similar findings per host/service).
+- Use abbreviated IDs (CVE-yyyy-N, ms??, weak-ssl, outdated, default-creds?).
+- Max 8 lines total (pick highest severity first).
+- No explanations, no extra text.

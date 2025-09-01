@@ -1,0 +1,15 @@
+GOAL: Very compact host discovery summary from the scan output below.
+
+OUTPUT RULES:
+1. One line per discovered target (skip hosts with no open/filtered ports info)
+2. Format: IP | Up | <#ports> | KeySvc
+3. KeySvc = most interesting detected service (short name) or '-' if none
+4. Truncate each line to remain very short (LCD friendly)
+5. DO NOT add explanations, headers or extra text
+
+PRIORITIZE:
+- Live hosts
+- Count of open ports
+- Single notable service (http/ssh/smb/rdp/mysql/etc.)
+
+If more than 10 hosts, only list the 10 with the highest number of open ports (tie-break by IP ascending).

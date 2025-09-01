@@ -1,0 +1,11 @@
+GOAL: Ultra-short attack vector hints per host.
+
+FORMAT: One line per host:
+IP: vec1, vec2, vec3
+
+RULES:
+- Max 3 vectors per host.
+- Each vector 1-2 words (e.g. weak-ssh, web-http, smb-share, rdp, mysql, ftp-anon?)
+- Omit hosts with only 1 low-value port (e.g. only 80) unless port is critical.
+- List at most 10 hosts (choose those with most/highest impact services).
+- No header, no footer.

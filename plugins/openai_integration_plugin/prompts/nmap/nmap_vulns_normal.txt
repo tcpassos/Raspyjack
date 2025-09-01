@@ -1,0 +1,14 @@
+GOAL: Structured vulnerability summary with severity & action.
+
+OUTPUT FORMAT:
+IP <ip>
+	Finding: <id/shortname> Sev:<L/M/H/C> Port:<p>/<proto> Svc:<svc>
+	Action: <1 short remediation or exploit step>
+
+RULES:
+- Group by host; multiple findings allowed (max 3 per host, choose highest severity).
+- Severity mapping: Critical(C)=remote code exec/default creds; High(H)=priv esc/serious info leak; Medium(M)=enumeration leverage; Low(L)=minor.
+- Action examples: patch, upgrade, brute, enum_shares, exploit_<id>, ssl_scan, weak_ciphers, default_creds.
+- Keep each Action under ~5 words.
+- Order hosts by highest severity present.
+- After all: Totals: C:<nC> H:<nH> M:<nM> L:<nL>

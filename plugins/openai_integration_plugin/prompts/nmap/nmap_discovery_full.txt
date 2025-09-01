@@ -1,0 +1,21 @@
+GOAL: Detailed discovery plus quick prioritization.
+
+OUTPUT FORMAT:
+SUMMARY:
+	Live Hosts: <count> | Total Open: <sum> | High Value: <count_high_value_hosts>
+PRIORITY (Top 5 by potential value):
+	<ip> -> <primary reason (e.g. many ports, web, smb, db, old ssh)>
+HOSTS:
+	<ip>
+		Open: <port/proto(s) list; group common services>
+		Notable: <concise service/version highlights; vuln script hints if present>
+		SurfaceScore: <LOW|MED|HIGH> (based on count & critical services)
+
+RULES:
+- Derive High Value / SurfaceScore from: number of open ports, presence of remote mgmt (ssh/rdp/winrm/vnc), data services (db, smb), web stack, legacy or anonymous services.
+- Compress ports (e.g. 80,81,443,8080 -> http-stack)
+- If more than 12 hosts, summarize remaining as: +N others (low surface)
+- Keep each host section within 4 lines total.
+- Provide actionable but brief reasons (no long paragraphs).
+
+END with a line: NEXT: run vuln/enumeration scans on HIGH targets.

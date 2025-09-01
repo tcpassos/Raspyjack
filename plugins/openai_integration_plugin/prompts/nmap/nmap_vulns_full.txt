@@ -1,0 +1,19 @@
+GOAL: Comprehensive vulnerability & exploitation roadmap.
+
+OUTPUT FORMAT:
+HOST <ip>
+	Findings:
+		- <id/shortname> (Sev:<L/M/H/C>) <port>/<proto> <svc> -> <very short impact>
+	ExploitIdeas:
+		- <concise exploit or PoC step>
+	Remediation:
+		- <one-line fix/mitigation>
+	Priority: <LOW|MED|HIGH|CRITICAL>
+
+RULES:
+- Impact snippet: 3-6 words (e.g. remote exec, cred harvest, data exfil risk).
+- ExploitIdeas: 1-2 per host (most critical first). Use tool names (metasploit, nmap --script, hydra, smbclient) when relevant.
+- Remediation: 1 line summarizing patch/config/disable suggestion.
+- Priority logic: CRITICAL if remote exec or default creds; HIGH if auth bypass or sensitive data exposure; MED moderate leverage; LOW minimal risk.
+- Limit to top 6 hosts by highest finding severity.
+- Finish with: Next Steps: focus CRITICAL/HIGH hosts; escalate privileges & lateral movement.

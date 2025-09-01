@@ -1,0 +1,18 @@
+GOAL: Expanded attack surface mapping with actionable follow-ups.
+
+OUTPUT FORMAT:
+HOST <ip>
+	Surface: <summary of key services & versions>
+	Vectors: <vector1>, <vector2>, <vector3>, <vector4> (prioritized)
+	Recommended:
+		- <short command or action>
+		- <short command or action>
+	Notes: <concise risk/peculiarity if any>
+
+RULES:
+- Recommended entries: specific next actions (nmap -sV -pX, script categories, enum tools, exploit-db search terms, simple exploit syntax).
+- Limit to 2 recommended bullet points unless host is clearly HIGH value (then 3).
+- Use compact commands (no long flags beyond essentials).
+- If vuln scripts already detected, integrate into vectors / recommended.
+- Cap hosts to top 8 by combined importance (services criticality + variety + potential vulnerabilities).
+- End with a FINAL line: Pivot Candidates: <ip1, ip2> (choose hosts offering lateral movement like smb, db, ldap, winrm).

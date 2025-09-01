@@ -1,0 +1,14 @@
+GOAL: Summarize likely attack vectors & quick wins per host.
+
+OUTPUT STRUCTURE:
+IP <ip>
+	Vectors: <vector1>, <vector2>, <vector3> (max 3)
+	QuickWin: <single high-impact immediate attempt>
+
+VECTOR CATEGORIES (examples): web-(tech?), ssh-(old/ver), smb-(shares?), rdp, ftp-anon, db-(mysql|postgres), vuln-(shortid), misconfig-(short), brute-(service), creds-reuse.
+
+RULES:
+- Only list hosts with at least a moderate surface (>=2 interesting ports or 1 critical service).
+- QuickWin is a terse phrase (e.g. enum_smb, grab_http_titles, check_ssh_ver, vuln_scripts, brute_ftp, probe_mysql).
+- Keep lines short; avoid narrative text.
+- Order hosts by descending potential impact (db/web/app stacks first, infra last).

@@ -2,15 +2,15 @@
 import sys
 import os
 import json
-from plugins.nmap_llm_openai.helpers import OpenAIHelper
+from plugins.openai_integration_plugin.helpers.openai_helper import OpenAIHelper
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'plugins_conf.json')
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'plugins', 'plugins_conf.json')
 
 def get_plugin_config():
     try:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             conf = json.load(f)
-        return conf.get('nmap_llm_openai', {}).get('options', {})
+        return conf.get('openai_integration_plugin', {}).get('options', {})
     except Exception:
         return None
 
@@ -22,7 +22,7 @@ def main():
     prompt = sys.argv[1]
     config = get_plugin_config()
     if not config:
-        print("[ERROR] Could not load plugin configuration.")
+        print("[OPENAI] Could not load plugin configuration.")
         sys.exit(1)
     api_key = config.get('api_key', '')
     language = config.get('language', 'en')
@@ -30,7 +30,7 @@ def main():
     helper = OpenAIHelper(api_key, language, model)
     result = helper.prompt(prompt)
     # Prepare output path
-    loot_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'loot', 'AI')
+    loot_dir = os.path.join(os.path.dirname(__file__), '..', 'loot', 'AI')
     os.makedirs(loot_dir, exist_ok=True)
     import datetime
     fname = f"ai_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -39,7 +39,10 @@ def main():
         f.write(result)
     # Set environment variable
     os.environ['AI_OUTPUT_PATH'] = out_path
+    print(f"[OPENAI] Output saved to {out_path}")
+    print(f"[OPENAI] === Result Start ===")
     print(result)
+    print(f"[OPENAI] === Result End ===")
 
 if __name__ == "__main__":
     main()
