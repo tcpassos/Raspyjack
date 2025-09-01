@@ -220,6 +220,33 @@ def get_button():
         time.sleep(0.01)
 
 
+def get_button_no_edge():
+    """Return first pressed button (level detection) without edge debouncing.
+
+    Useful for widgets (like passive text scrollers) that want continuous
+    press sampling (e.g., holding UP should repeatedly scroll) without the
+    single-edge gating applied in `get_button` for directional keys.
+
+    Still applies a minimal debounce interval for all buttons to avoid
+    overwhelming the UI thread on sustained contact bounce.
+    """
+    while True:
+        now_t = time.time()
+        for item, pin in gpio_config.pins.items():
+            val = GPIO.input(pin)
+            if val == 0:  # active low pressed
+                last_t = _button_last_time.get(item, 0)
+                if (now_t - last_t) >= _DEBOUNCE_INTERVAL:
+                    _button_last_time[item] = now_t
+                    if '_plugin_manager' in globals() and _plugin_manager is not None:
+                        try:
+                            _plugin_manager.dispatch_button(item)
+                        except Exception:
+                            pass
+                    return item
+        time.sleep(0.01)
+
+
 def leave(poweroff: bool = False) -> None:
     _stop_evt.set()
     if '_plugin_manager' in globals() and _plugin_manager is not None:
@@ -1371,8 +1398,13 @@ def main():
     global _widget_context
     
     _widget_context = WidgetContext(
-        draw=draw, lcd=LCD, image=image, color_scheme=color,
-        get_button_func=get_button, fonts={'default': text_font, 'icon': icon_font},
+        draw=draw,
+        lcd=LCD,
+        image=image,
+        color_scheme=color,
+        get_button_func=get_button,
+        get_button_raw_func=get_button_no_edge,
+        fonts={'default': text_font, 'icon': icon_font},
         default_settings=default,
         status_bar=status_bar,
         plugin_manager=_plugin_manager

@@ -18,15 +18,28 @@ from gpio_config import gpio_config
 
 
 class WidgetContext:
-    """Context object that holds all the dependencies needed by widgets."""
-    
-    def __init__(self, draw, lcd, image, color_scheme, get_button_func, 
+    """Context object that aggregates dependencies required by widgets.
+
+    Args:
+        draw: PIL.ImageDraw drawing object used for rendering.
+        lcd: LCD driver instance.
+        image: Base PIL.Image buffer representing the current frame.
+        color_scheme: Color scheme / drawing helpers object.
+        get_button_func: Default (edge-detected) button reader function.
+        get_button_raw_func: Optional raw level button reader for continuous repeat.
+        fonts: Dictionary of font objects.
+        default_settings: Layout/default configuration object.
+        status_bar: Optional status bar instance.
+        plugin_manager: Optional reference to the plugin manager.
+    """
+    def __init__(self, draw, lcd, image, color_scheme, get_button_func, get_button_raw_func,
                  fonts: Dict[str, Any], default_settings=None, status_bar=None, plugin_manager=None):
         self.draw = draw
         self.lcd = lcd  
         self.image = image
         self.color = color_scheme
         self.get_button = get_button_func
+        self.get_button_raw = get_button_raw_func
         self.fonts = fonts
         self.default = default_settings or self._create_default_settings()
         self.status_bar = status_bar
@@ -430,7 +443,7 @@ class ScrollableText(BaseWidget):
             self.update_display()
             time.sleep(0.12)
 
-            btn = self.ctx.get_button()
+            btn = self.ctx.get_button_raw()
             if btn == "KEY_DOWN_PIN":
                 if top_index < total - WINDOW:
                     top_index += 1
