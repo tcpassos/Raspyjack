@@ -1354,10 +1354,6 @@ class MenuManager:
         elif callable(action):
             # User selected an item with a function to execute.
             action()
-            # After execution, the loop will redraw the current menu.
-            # We pop the menu key so the main loop can re-push it, causing a refresh.
-            if self.menu_stack and not force_refresh:
-                self.menu_stack.pop()
 
     def run(self):
         """Run the menu system without blocking background overlay refresh."""
