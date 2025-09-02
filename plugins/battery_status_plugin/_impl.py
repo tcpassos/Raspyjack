@@ -65,93 +65,370 @@ class _INA219:
         return value * self._power_lsb
 
 class BatteryStatusPlugin(Plugin):
-
     def on_load(self, ctx: dict) -> None:
+        """Initialize battery monitoring state and attempt sensor setup."""
         self.ctx = ctx
-        self.addr = int(self.get_config_value("address", 0x43))
+        # Configuration (manifest-driven with defaults)
+        self.addr = int(self.get_config_value("address", 67))  # decimal (0x43)
         self.bus_num = int(self.get_config_value("i2c_bus", 1))
-        self.refresh_interval = float(self.get_config_value("refresh_interval", 2.0))
+        self.base_refresh_interval = float(self.get_config_value("refresh_interval", 2.0))
         self.v_min = float(self.get_config_value("voltage_min", 3.0))
         self.v_max = float(self.get_config_value("voltage_max", 4.2))
+        self.warn_threshold = int(self.get_config_value("warn_threshold", 25))
+        self.crit_threshold = int(self.get_config_value("crit_threshold", 10))
+        self.colorize = bool(self.get_config_value("colorize", True))
+        self.align = str(self.get_config_value("battery_align", "right")).lower()
+        self.offset = int(self.get_config_value("battery_offset", 0))
+
+        # State
         self._last_poll = 0.0
-        self.percent = None
+        self.percent = None  # type: float | None
+        self.last_emit_percent = None  # type: int | None
+        self.read_errors = 0
+        self.samples_ok = 0
+        self._stable_high_cycles = 0  # used for adaptive polling
+        self._blink_phase = False     # for critical blink
         self.ok = False
+
+        # Sensor init
         try:
             self.sensor = _INA219(self.bus_num, self.addr)
             self.ok = True
         except Exception as e:
             print(f"[BatteryStatus] Disabled (I2C init failed): {e}")
             self.sensor = None
+            self.emit("battery.sensor_error", error=str(e))
+        # Build voltage table now that v_min is known
+        try:
+            self._voltage_table = self._build_voltage_table()
+        except Exception:
+            self._voltage_table = []
+
+    def _build_voltage_table(self) -> list[tuple[float, int]]:
+        """Build a voltage->percent table dynamically using configured v_min.
+        Strategy:
+          - Keep higher plateau reference points (>= ~3.74V) static (typical Li-ion curve).
+          - Interpolate mid/low region down to configured v_min with extra steps:
+              7%, 5%, 4%, 3%, 2%, 1%, 0%
+          - Ensure voltages are monotonic descending.
+        """
+        v_min = self.v_min
+        # Dynamic top based on configured v_max
+        top = self.v_max
+        # Ensure top reasonably above v_min
+        if top <= v_min + 0.25:
+            top = v_min + 0.25  # enforce minimal span
+        # 90% point ~100mV below top (or 70% of span if span small)
+        span = top - v_min
+        delta_90 = 0.10 if span >= 0.50 else span * 0.2
+        v_90 = max(v_min + 0.01, top - delta_90)
+        # Mid/high references proportionally spaced if span large enough
+        # We map rough Li-ion shape but scale around top
+        def interp(p):
+            # p is desired percent; convert to voltage using simple proportion within span, then adjust curvature
+            frac = (100 - p) / 100.0
+            return top - (span * (frac ** 1.2))  # slight curve
+        # Build ordered list high→lower (descending volts)
+        perc_points = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]
+        volts_map = {}
+        for p in perc_points:
+            if p == 100:
+                volts_map[p] = round(top, 3)
+            elif p == 90:
+                volts_map[p] = round(v_90, 3)
+            else:
+                volts_map[p] = round(interp(p), 3)
+        # Ensure strictly descending
+        ordered = []
+        last_v = top + 1
+        for p in perc_points:
+            v_p = volts_map[p]
+            if v_p >= last_v:  # enforce descending by nudging
+                v_p = last_v - 0.01
+            ordered.append((v_p, p))
+            last_v = v_p
+        high = ordered
+        # We map 5% around 3.50V traditionally; adapt if v_min higher.
+        v_5 = max(v_min + 0.18, min(3.50, 3.68 - 0.15))  # ensure spacing ~0.18V above v_min
+        # Generate tail points with gentle slope toward v_min
+        tail_perc = [7,5,4,3,2,1,0]
+        tail = []
+        # Distribute voltages linearly between v_5 and v_min
+        tail_span = v_5 - v_min if v_5 > v_min else 0.05
+        for i, p in enumerate(tail_perc):
+            frac = i / (len(tail_perc) - 1) if len(tail_perc) > 1 else 1
+            v_point = v_5 - frac * tail_span
+            tail.append((round(v_point, 3), p))
+        table = high + tail
+        # Remove any duplicates or non-descending anomalies
+        cleaned = []
+        last_v = 10.0
+        for v,p in table:
+            if v < last_v - 0.0005:  # enforce descending with minimal gap
+                cleaned.append((v,p))
+                last_v = v
+            elif v < last_v and cleaned:
+                # adjust slightly if almost equal
+                adj_v = last_v - 0.002
+                cleaned.append((adj_v, p))
+                last_v = adj_v
+        return cleaned
+
+    def _voltage_to_percent(self, v: float) -> float:
+        """Convert voltage to approximate percent via linear interpolation over a piecewise table."""
+        # Build table lazily if not present (after on_load)
+        if not hasattr(self, '_voltage_table') or not self._voltage_table:
+            try:
+                self._voltage_table = self._build_voltage_table()
+            except Exception:
+                # Fallback to a minimal static table if build fails
+                self._voltage_table = [
+                    (4.20, 100), (3.90, 70), (3.74, 20), (self.v_min, 0)
+                ]
+        table = self._voltage_table
+        # Clamp
+        if v >= table[0][0]:
+            return 100.0
+        if v <= table[-1][0]:
+            return 0.0
+        # Find segment
+        for i in range(len(table) - 1):
+            v_hi, p_hi = table[i]
+            v_lo, p_lo = table[i + 1]
+            if v_hi >= v >= v_lo:
+                # Linear interpolation within segment
+                span = v_hi - v_lo
+                if span <= 0:
+                    return float(p_lo)
+                ratio = (v - v_lo) / span
+                return p_lo + ratio * (p_hi - p_lo)
+        return 0.0
+
+    def _effective_interval(self) -> float:
+        """Compute adaptive polling interval.
+
+        Strategy:
+          - If percent is high and stable, back off (slower polling).
+          - If low (<= warn threshold) or unknown, use base interval.
+        """
+        pct = self.percent if self.percent is not None else 0
+        if pct >= 80 and self._stable_high_cycles >= 5:
+            return self.base_refresh_interval * 4  # slow down when very stable
+        if pct >= 60 and self._stable_high_cycles >= 3:
+            return self.base_refresh_interval * 2
+        if pct <= self.crit_threshold:
+            return max(0.5, self.base_refresh_interval * 0.5)  # speed up when critical
+        if pct <= self.warn_threshold:
+            return max(1.0, self.base_refresh_interval * 0.75)
+        return self.base_refresh_interval
 
     def on_tick(self, dt: float) -> None:
         if not self.ok or self.sensor is None or not self.get_config_value("enable_monitoring", True):
             return
         now = time.time()
-        if now - self._last_poll < self.refresh_interval:
+        interval = self._effective_interval()
+        if now - self._last_poll < interval:
             return
         self._last_poll = now
         try:
             v = self.sensor.bus_voltage()
-            pct = (v - self.v_min) / (self.v_max - self.v_min) * 100.0
-            pct = max(0.0, min(100.0, pct))
-            self.percent = pct
+            raw_pct = self._voltage_to_percent(v)
+            # Exponential smoothing
+            if self.percent is None:
+                self.percent = raw_pct
+            else:
+                alpha = 0.25
+                self.percent = self.percent + alpha * (raw_pct - self.percent)
+            self.samples_ok += 1
+            # Stability tracking (increment if change < 0.5%)
+            if self.last_emit_percent is not None and self.percent is not None:
+                if abs(self.percent - self.last_emit_percent) < 0.5:
+                    self._stable_high_cycles += 1
+                else:
+                    self._stable_high_cycles = 0
+            # Event emission control
+            if self.percent is not None:
+                rounded = int(self.percent)
+                emit_change = (self.last_emit_percent is None or abs(rounded - self.last_emit_percent) >= 1)
+                if emit_change:
+                    self.emit("battery.updated", percent=rounded, voltage=v, ts=now,
+                              errors=self.read_errors, samples=self.samples_ok)
+                    # Threshold events
+                    if rounded <= self.crit_threshold:
+                        self.emit("battery.critical", percent=rounded, voltage=v, ts=now)
+                    elif rounded <= self.warn_threshold:
+                        if self.last_emit_percent is None or self.last_emit_percent > self.warn_threshold:
+                            self.emit("battery.low", percent=rounded, voltage=v, ts=now)
+                    elif (self.last_emit_percent is not None and
+                          self.last_emit_percent <= self.warn_threshold and
+                          rounded > self.warn_threshold):
+                        self.emit("battery.recovered", percent=rounded, voltage=v, ts=now)
+                    self.last_emit_percent = rounded
         except Exception as e:
-            print(f"[BatteryStatus] read error: {e}")
-            self.percent = None
+            self.read_errors += 1
+            if self.read_errors == 1 or self.read_errors % 10 == 0:
+                print(f"[BatteryStatus] read error: {e}")
+            if self.read_errors in (1, 10):
+                self.emit("battery.sensor_error", error=str(e), ts=now, count=self.read_errors)
 
     def on_render_overlay(self, image, draw) -> None:
         if (self.percent is None or 
             not self.get_config_value("enable_monitoring", True) or 
             (not self.get_config_value("show_percentage", True) and not self.get_config_value("show_icon", True))):
             return
-            
+
         try:
             if 'status_bar' in getattr(self, 'ctx', {}) and self.ctx['status_bar'].is_busy():
                 return
         except Exception:
             pass
-            
+
         w, h = image.size
-        
-        # Show battery icon if enabled
-        if self.get_config_value("show_icon", True):
-            icon_w = 18
-            icon_h = 8
-            x2 = w - 4
-            x1 = x2 - icon_w
-            y1 = 0
+        rounded = int(self.percent)
+
+        # Determine colors
+        fill_color = "white"
+        text_color = "white"
+        if self.colorize:
+            if rounded <= self.crit_threshold:
+                # Blink effect (toggle phase each render call)
+                self._blink_phase = not self._blink_phase
+                fill_color = "red" if self._blink_phase else "black"
+                text_color = "red"
+            elif rounded <= self.warn_threshold:
+                fill_color = "yellow"
+                text_color = "yellow"
+            else:
+                fill_color = "lime"
+                text_color = "lime"
+
+        show_icon = self.get_config_value("show_icon", True)
+        show_pct = self.get_config_value("show_percentage", True)
+        icon_w = 18
+        icon_h = 8
+        gap = 3  # space between text and icon
+        pct_text = f"{rounded:02d}%" if show_pct else ""
+        text_w = len(pct_text) * 5 if show_pct else 0
+        block_w = 0
+        if show_icon:
+            block_w += icon_w
+        if show_pct:
+            if show_icon:
+                block_w += gap
+            block_w += text_w
+        # Determine starting x based on alignment
+        if self.align == "left":
+            start_x = 2 + self.offset
+        elif self.align == "center":
+            start_x = (w - block_w) // 2 + self.offset
+        else:  # right
+            start_x = w - block_w - 2 + self.offset
+        # Clamp
+        if start_x < 0:
+            start_x = 0
+        if start_x + block_w > w:
+            start_x = max(0, w - block_w)
+
+        cur_x = start_x
+        y1 = 0
+        if show_pct and not show_icon:
+            # Only text
+            draw.text((cur_x, y1), pct_text, fill=text_color)
+        elif show_icon:
+            # Draw text first if alignment chosen produced text before icon
+            if show_pct and self.align == 'left':
+                draw.text((cur_x, y1), pct_text, fill=text_color)
+                cur_x += text_w + gap
+            # Battery icon
+            x1 = cur_x
+            x2 = x1 + icon_w
             y2 = y1 + icon_h
-            draw.rectangle((x1, y1, x2 - 3, y2), outline="white", fill=None)
-            draw.rectangle((x2 - 3, y1 + 2, x2, y2 - 2), outline="white", fill="white")
+            draw.rectangle((x1, y1, x2 - 3, y2), outline=text_color, fill=None)
+            draw.rectangle((x2 - 3, y1 + 2, x2, y2 - 2), outline=text_color, fill=text_color)
             inner_w = icon_w - 6
-            fill_w = int(inner_w * (self.percent / 100.0))
+            fill_w = int(inner_w * (rounded / 100.0))
             if fill_w > 0:
-                draw.rectangle((x1 + 2, y1 + 2, x1 + 2 + fill_w, y2 - 2), fill="white")
-            
-            # Show percentage text if enabled
-            if self.get_config_value("show_percentage", True):
-                pct_text = f"{int(self.percent):02d}%"
-                text_x = x1 - 3 - (len(pct_text) * 5)
-                if text_x < 0:
-                    text_x = 0
-                draw.text((text_x, y1), pct_text, fill="white")
-        elif self.get_config_value("show_percentage", True):
-            # Show only percentage text (no icon)
-            pct_text = f"{int(self.percent):02d}%"
-            text_x = w - 30
-            draw.text((text_x, 0), pct_text, fill="white")
+                draw.rectangle((x1 + 2, y1 + 2, x1 + 2 + fill_w, y2 - 2), fill=fill_color)
+            cur_x = x2 + gap
+            # If text should appear after icon (center/right or no left case)
+            if show_pct and self.align != 'left':
+                draw.text((cur_x, y1), pct_text, fill=text_color)
+
+    def on_unload(self) -> None:
+        """Attempt to close I2C bus cleanly."""
+        try:
+            if getattr(self, 'sensor', None) and hasattr(self.sensor, 'bus') and hasattr(self.sensor.bus, 'close'):
+                self.sensor.bus.close()
+        except Exception:
+            pass
 
     def on_config_changed(self, key: str, old_value, new_value) -> None:
         """React to configuration changes."""
-        if key == "enable_monitoring":
-            status = "enabled" if new_value else "disabled"
-            print(f"[{self.name}] Battery monitoring {status}")
-        elif key == "show_percentage":
-            status = "enabled" if new_value else "disabled"
-            print(f"[{self.name}] Percentage display {status}")
-        elif key == "show_icon":
-            status = "enabled" if new_value else "disabled"
-            print(f"[{self.name}] Icon display {status}")
+        try:
+            changed = False
+            if key == "enable_monitoring":
+                status = "enabled" if new_value else "disabled"
+                print(f"[{self.name}] Battery monitoring {status}")
+            elif key == "show_percentage":
+                status = "enabled" if new_value else "disabled"
+                print(f"[{self.name}] Percentage display {status}")
+            elif key == "show_icon":
+                status = "enabled" if new_value else "disabled"
+                print(f"[{self.name}] Icon display {status}")
+            elif key == "colorize":
+                self.colorize = bool(new_value)
+                changed = True
+            elif key == "battery_align":
+                self.align = str(new_value).lower()
+                changed = True
+            elif key == "battery_offset":
+                try:
+                    self.offset = int(new_value)
+                except Exception:
+                    pass
+                changed = True
+            elif key == "warn_threshold":
+                try:
+                    self.warn_threshold = int(new_value)
+                    changed = True
+                except Exception:
+                    pass
+            elif key == "crit_threshold":
+                try:
+                    self.crit_threshold = int(new_value)
+                    changed = True
+                except Exception:
+                    pass
+            elif key in ("voltage_min", "voltage_max"):
+                # Update voltage range and rebuild table.
+                try:
+                    if key == "voltage_min":
+                        self.v_min = float(new_value)
+                    else:
+                        self.v_max = float(new_value)
+                    self._voltage_table = self._build_voltage_table()
+                    # Recalculate current percent if we have latest voltage
+                    try:
+                        if self.sensor is not None:
+                            v_now = self.sensor.bus_voltage()
+                            raw_pct = self._voltage_to_percent(v_now)
+                            self.percent = raw_pct
+                            self.last_emit_percent = None
+                    except Exception:
+                        pass
+                    changed = True
+                except Exception as e:
+                    print(f"[{self.name}] Voltage table rebuild failed: {e}")
+            # If a visual / calculation element changed and we have a reading, emit updated event
+            if changed and self.percent is not None:
+                try:
+                    pct_int = int(self.percent)
+                    self.emit("battery.updated", percent=pct_int, voltage=None, ts=time.time(),
+                              errors=self.read_errors, samples=self.samples_ok, reason=key)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[{self.name}] on_config_changed error for {key}: {e}")
     
     def get_info(self) -> str:
         if not self.ok or self.sensor is None:
@@ -192,14 +469,18 @@ class BatteryStatusPlugin(Plugin):
             f"• Monitoring: {'ON' if enable_monitoring else 'OFF'}",
             f"• Show Percentage: {'ON' if show_percentage else 'OFF'}",
             f"• Show Icon: {'ON' if show_icon else 'OFF'}",
+            f"• Warn Threshold: {self.warn_threshold}%",
+            f"• Critical Threshold: {self.crit_threshold}%",
+            f"• Colorize: {'ON' if self.colorize else 'OFF'}",
             "",
             "Hardware Configuration:",
             f"I2C Address: 0x{self.addr:02X}",
             f"I2C Bus: {self.bus_num}",
-            f"Refresh Rate: {self.refresh_interval}s",
+            f"Base Refresh: {self.base_refresh_interval}s (adaptive)",
             f"Voltage Range: {self.v_min}V - {self.v_max}V",
             "",
             f"Sensor Status: {'Active' if self.ok else 'Error'}",
+            f"Samples OK: {self.samples_ok}  Errors: {self.read_errors}",
             f"Last Update: {time.strftime('%H:%M:%S', time.localtime(self._last_poll))}"
         ]
         return "\n".join(info_lines)
