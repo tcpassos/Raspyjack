@@ -45,22 +45,10 @@ def _send_notification(webhook_url: str, scan_label: str, file_path: str, target
         print(f"[DiscordNotifier] Error sending webhook: {e}")
 
 class DiscordNotifierPlugin(Plugin):
-    name = "DiscordNotifier"
-    priority = 200
 
     def on_load(self, ctx: dict) -> None:
         self._ctx = ctx
 
-    def get_config_schema(self) -> dict:
-        """Return configuration schema for Discord plugin."""
-        return {
-            "nmap_notifications": {
-                "type": "boolean",
-                "label": "Nmap Notifications",
-                "description": "Send Discord notifications when Nmap scans complete",
-                "default": True
-            }
-        }
 
     def on_after_scan(self, label: str, args: list[str], result_path: str) -> None:
         # Check if nmap notifications are enabled

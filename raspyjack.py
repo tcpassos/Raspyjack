@@ -352,13 +352,11 @@ def reload_plugins():
         'draw_image': lambda: image,
         'draw_obj': lambda: draw,
         'status_bar': status_bar,
+        'get_button_event': _evt_get_button_event,
         # Placeholders (filled after WidgetContext is created in main())
         'widget_context': None,
         'plugin_manager': None,
-        'emit_event': None,
-        'subscribe_event': None,
-        'defaults': None,
-        'get_button_event': _evt_get_button_event,
+        'defaults': None
     }
     _plugin_manager = _rt_reload_plugins(_plugin_manager, default.install_path, ctx)
 
@@ -1413,8 +1411,6 @@ def main():
             if isinstance(pm_ctx, dict):
                 pm_ctx['widget_context'] = _widget_context
                 pm_ctx['plugin_manager'] = _plugin_manager
-                pm_ctx['emit_event'] = getattr(_plugin_manager, 'emit_event', None)
-                pm_ctx['subscribe_event'] = getattr(_plugin_manager, 'subscribe_event', None)
                 pm_ctx['defaults'] = default
     except Exception:
         pass

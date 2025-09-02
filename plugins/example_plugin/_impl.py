@@ -7,7 +7,7 @@ Key Concepts:
   * The class must inherit from plugins.base.Plugin
   * Provide a `plugin = YourClass()` instance at module level OR expose a subclass
   * Implement optional lifecycle hooks as needed
-  * Define a configuration schema via get_config_schema()
+  * Define configuration options in `plugin.json` (config_schema)
   * Use on_config_changed() to react to runtime toggles
   * Keep every hook non‑blocking; long operations should spawn threads.
 
@@ -23,17 +23,13 @@ Lifecycle Hooks (all optional):
   on_after_scan(label, args, result_path) - After scan finishes
 
 Configuration Schema:
-  Return a dict mapping option keys to descriptors:
-    {
-      "my_flag": {
-        "type": "boolean",
-        "label": "Enable Feature",
-        "description": "Turns on the awesome thing",
-        "default": True
-      }
-    }
-  These defaults are auto‑added to plugins_conf.json when a new plugin is first
-  detected. All values are stored under that plugin's "options" dict.
+  Declared statically in the plugin's `plugin.json` manifest under `config_schema`.
+  Each key maps to a descriptor object with: type, label, description, default.
+  Defaults are written to plugins_conf.json when the plugin is first discovered.
+
+Event Bus:
+    Use `self.emit('domain.event', key=value)` to publish and `self.on('pattern', handler)` to subscribe.
+    Wildcards supported (e.g. `self.on('ethernet.*', handler)`).
 
 Overlay Drawing:
   Keep it tiny: draw only what you need (text, small icons). Do not clear the
@@ -52,8 +48,6 @@ from plugins.base import Plugin
 
 
 class ExamplePlugin(Plugin):
-    name = "ExamplePlugin"
-    priority = 150  # Larger number = later in ordering
 
     # Internal state variables
     def __init__(self):
@@ -62,24 +56,6 @@ class ExamplePlugin(Plugin):
         self._counter = 0
         self._enabled_runtime_feature = True
 
-    # ------------------------------------------------------------------
-    # Configuration
-    # ------------------------------------------------------------------
-    def get_config_schema(self) -> dict:
-        return {
-            "show_counter": {
-                "type": "boolean",
-                "label": "Show Counter HUD",
-                "description": "Display a simple incrementing counter on screen",
-                "default": True,
-            },
-            "enable_runtime_feature": {
-                "type": "boolean",
-                "label": "Runtime Feature",
-                "description": "Example toggle demonstrating on_config_changed()",
-                "default": True,
-            },
-        }
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -1,0 +1,48 @@
+{
+  "name": "OpenAI Integration",
+  "version": "0.1.0",
+  "author": "tcpassos",
+  "description": "Integrate OpenAI model calls for scan analysis and prompts",
+  "priority": 100,
+  "requires": [],
+  "permissions": {
+    "network": true,
+    "filesystem": true
+  },
+  "events": {
+    "emits": ["openai.scan.analyzed"],
+    "listens": ["scan.completed"]
+  },
+  "config_schema": {
+    "api_key": {
+      "type": "string",
+      "label": "API Key",
+      "description": "API key for accessing OpenAI service",
+      "default": ""
+    },
+    "language": {
+      "type": "string",
+      "label": "Language",
+      "description": "Preferred language for responses",
+      "default": "en"
+    },
+    "model": {
+      "type": "string",
+      "label": "Model",
+      "description": "Model identifier to use for queries",
+      "default": "gpt-5-nano"
+    },
+    "auto_analyze_scans": {
+      "type": "boolean",
+      "label": "Auto Analyze Scans",
+      "description": "Automatically analyze Nmap scans with LLM",
+      "default": false
+    },
+    "prompt_verbosity": {
+      "type": "string",
+      "label": "Prompt Verbosity",
+      "description": "Verbosity level for prompts (minimal|normal|full)",
+      "default": "normal"
+    }
+  }
+}

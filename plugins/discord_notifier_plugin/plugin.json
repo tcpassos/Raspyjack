@@ -1,0 +1,24 @@
+{
+  "name": "Discord Notifier",
+  "version": "0.1.0",
+  "author": "7h30th3r0n3 & tcpassos",
+  "description": "Send Discord webhooks for completed scans and provide loot upload actions",
+  "priority": 200,
+  "requires": [],
+  "permissions": {
+    "network": true,
+    "filesystem": true
+  },
+  "events": {
+    "emits": ["discord.message.sent", "discord.scan.notified"],
+    "listens": ["scan.completed"]
+  },
+  "config_schema": {
+    "nmap_notifications": {
+      "type": "boolean",
+      "label": "Nmap Notifications",
+      "description": "Send Discord notifications when Nmap scans complete",
+      "default": true
+    }
+  }
+}

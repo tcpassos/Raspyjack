@@ -14,14 +14,13 @@ Life‑cycle / callback methods (all optional):
             status_bar                  -> StatusBar instance (set_temp_status, is_busy, etc.).
             widget_context              -> WidgetContext instance (interactive UI helpers).
             plugin_manager              -> PluginManager instance (advanced access; prefer helpers below).
-            emit_event(event, **data)   -> Convenience wrapper to publish an event on the bus.
-            subscribe_event(event, h)   -> Register an event handler h(event_name, data).
             defaults                    -> Defaults object (paths: install_path, payload_path, payload_log, etc.).
 
         Notes:
-            - Some keys (widget_context, emit_event, subscribe_event, plugin_manager, defaults)
-              are injected AFTER initial plugin load once the UI is fully initialized; if accessed
+            - Some keys (widget_context, plugin_manager, defaults)
+                are injected AFTER initial plugin load once the UI is fully initialized; if accessed
               inside on_load they may be None. Use on_tick or later, or defensively check for None.
+            - Event bus helpers are available as instance methods: self.emit/self.on/self.once/self.off/self.off_pattern.
             - Avoid mutating objects you don't own (draw over small regions, never reassign globals).
 
     on_unload() -> None
@@ -63,7 +62,7 @@ Life‑cycle / callback methods (all optional):
         plugin menus are rebuilt, so it should be fast and side‑effect free.
 
 Design goals:
-- Canonical package layout per plugin:
+- Canonical package layout per plugin (metadata now exclusively via plugin.json manifest):
 
         plugins/
             my_plugin/
@@ -74,8 +73,8 @@ Design goals:
                 ...
 
 - Safe: all callbacks are wrapped in try/except so one misbehaving plugin
-  does not break the main UI.
-- Order: plugins have a `priority` (lower runs first for each dispatch).
+    does not break the main UI.
+- Order: dispatch ordering determined by manifest `priority` (lower first; default 100) applied at load.
 
 Per-plugin bin exposure:
 If a plugin package contains a `bin` directory, its executable files are
@@ -97,14 +96,46 @@ import shutil
 
 
 class Plugin:
-    name: str = "BasePlugin"
-    priority: int = 100  # lower = earlier
-    # Will be filled with the plugin specific configuration block
+    # Backing fields populated by loader from manifest
+    _manifest_name: str | None = None
+    _manifest_priority: int | None = None
+    _manifest_requires: list[str] | None = None
+    _manifest_config_schema: dict | None = None
+    # Filled with plugin configuration block at runtime
     config: dict | None = None
-    # Optional dependency list: module (directory) names this plugin needs loaded first
-    requires: list[str] | None = None
     # Internal: path to module file (set by PluginManager) for persistence helpers
     _module_file: str | None = None
+
+    # Properties expose manifest-sourced metadata (with sane fallbacks)
+    @property
+    def name(self) -> str:
+        return self._manifest_name or self.__class__.__name__
+
+    @name.setter
+    def name(self, value: str) -> None:
+        # Allow loader to assign; ignore empty
+        if value:
+            self._manifest_name = value
+
+    @property
+    def priority(self) -> int:
+        return self._manifest_priority if isinstance(self._manifest_priority, int) else 100
+
+    @priority.setter
+    def priority(self, value: int) -> None:
+        try:
+            self._manifest_priority = int(value)
+        except Exception:
+            pass
+
+    @property
+    def requires(self) -> list[str]:
+        return list(self._manifest_requires) if self._manifest_requires else []
+
+    @requires.setter
+    def requires(self, value):
+        if isinstance(value, list):
+            self._manifest_requires = [v for v in value if isinstance(v, str) and v]
 
     # --- Life‑cycle hooks -------------------------------------------------
     def on_load(self, ctx: dict) -> None: ...
@@ -124,58 +155,6 @@ class Plugin:
         return "No information available for this plugin."
     
     # --- Configuration system ---------------------------------------------
-    def get_config_schema(self) -> dict:
-        """Return configuration schema for this plugin.
-        
-        Returns a dictionary where keys are config names and values are
-        definitions. Each definition MUST at least contain:
-            type        -> one of: "boolean", "string", "list", "number"
-            label       -> short human label for menus / UI
-            description -> longer help text (may be truncated in UI)
-            default     -> default value (type must match)
-
-        UI LIMITATION (current):
-            Only entries of type "boolean" are presented in the on-device
-            menu for toggle (True/False). Other types ("string", "list") are
-            still loaded, merged into config, and exposed to plugins via
-            get_config_value(), but must be edited manually in the
-            plugins_conf.json file until richer UI editors are implemented.
-
-        Type semantics:
-            boolean -> stored as native bool
-            string  -> stored as str
-            list    -> stored as list (recommended: list[str])
-            number  -> stored as int or float (JSON numeric)
-
-        Example schema supporting multiple types:
-            {
-                "auto_start": {
-                    "type": "boolean",
-                    "label": "Auto Start on Boot",
-                    "description": "Start this plugin automatically on boot",
-                    "default": False
-                },
-                "interface": {
-                    "type": "string",
-                    "label": "Net Interface",
-                    "description": "Interface name (edit JSON for now)",
-                    "default": "eth0"
-                },
-                "connect_payloads": {
-                    "type": "list",
-                    "label": "Connect Payloads",
-                    "description": "List of payload scripts (edit JSON)",
-                    "default": []
-                },
-                "interval_secs": {
-                    "type": "number",
-                    "label": "Interval Seconds",
-                    "description": "Polling interval (edit JSON)",
-                    "default": 5
-                }
-            }
-        """
-        return {}
     
     def get_config_value(self, key: str, default=None):
         """Get current value of a configuration setting."""
@@ -187,10 +166,9 @@ class Plugin:
             return options[key]
         
         # Fallback to schema default if available
-        schema = self.get_config_schema()
+        schema = getattr(self, '_manifest_config_schema', {}) or {}
         if key in schema:
             return schema[key].get('default', default)
-        
         return default
     
     def set_config_value(self, key: str, value) -> None:
@@ -207,6 +185,32 @@ class Plugin:
     def on_config_changed(self, key: str, old_value, new_value) -> None:
         """Called when a configuration value changes. Override to react to config changes."""
         pass
+
+    # --- Event bus convenience (assigned when loaded) -----------------
+    def emit(self, event: str, **data) -> None:
+        mgr = getattr(self, '_plugin_manager', None)
+        if mgr and hasattr(mgr, 'emit_event'):
+            mgr.emit_event(event, **data)
+
+    def on(self, pattern: str, handler) -> None:
+        mgr = getattr(self, '_plugin_manager', None)
+        if mgr and hasattr(mgr, 'subscribe_event'):
+            mgr.subscribe_event(pattern, handler)
+
+    def once(self, pattern: str, handler) -> None:
+        mgr = getattr(self, '_plugin_manager', None)
+        if mgr and hasattr(mgr, 'once_event'):
+            mgr.once_event(pattern, handler)
+
+    def off(self, handler) -> None:
+        mgr = getattr(self, '_plugin_manager', None)
+        if mgr and hasattr(mgr, 'unsubscribe_event'):
+            mgr.unsubscribe_event(handler)
+
+    def off_pattern(self, pattern: str) -> None:
+        mgr = getattr(self, '_plugin_manager', None)
+        if mgr and hasattr(mgr, 'unsubscribe_event_pattern'):
+            mgr.unsubscribe_event_pattern(pattern)
 
     # --- Persistence convenience -----------------------------------------
     def persist_option(self, key: str, value, create_if_missing: bool = True) -> bool:
@@ -274,8 +278,9 @@ class PluginManager:
         self._last_tick: float = time.time()
         self._ctx: dict = {}
         self.verbose = verbose
-        # Simple event bus structures
-        self._event_handlers: dict[str, list] = {}
+        # Event bus (wildcard capable) provided separately
+        from .event_bus import EventBus
+        self._event_bus = EventBus()
         # Internal synchronization
         import threading
         self._lock = threading.RLock()
@@ -289,6 +294,7 @@ class PluginManager:
     def load_all(self, module_names: Sequence[str], context: dict) -> None:
         with self._lock:
             self._ctx = context
+            manifests = context.get('plugin_manifests', {}) if isinstance(context, dict) else {}
             for name in module_names:
                 name = name.strip()
                 if not name:
@@ -316,10 +322,33 @@ class PluginManager:
                     self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
                     continue
 
+                # Apply manifest metadata prior to on_load
+                manifest = manifests.get(name, {}) if isinstance(manifests, dict) else {}
+                if manifest:
+                    try:
+                        if 'name' in manifest:
+                            try: instance.name = manifest['name']
+                            except Exception: pass
+                        if 'priority' in manifest:
+                            try: instance._manifest_priority = int(manifest['priority'])
+                            except Exception: pass
+                        if 'requires' in manifest and isinstance(manifest.get('requires'), list):
+                            try: instance._manifest_requires = list(manifest['requires'])
+                            except Exception: pass
+                        if 'config_schema' in manifest and isinstance(manifest.get('config_schema'), dict):
+                            try: instance._manifest_config_schema = manifest['config_schema']
+                            except Exception: pass
+                    except Exception:
+                        pass
+
                 try:
+                    try:
+                        setattr(instance, '_plugin_manager', self)
+                    except Exception:
+                        pass
                     instance.on_load(context)
                 except Exception as e:
-                    self._log(f"[PLUGIN] on_load error in {instance.name}: {e}")
+                    self._log(f"[PLUGIN] on_load error in {getattr(instance,'name', name)}: {e}")
                     self._log(traceback.format_exc())
                     continue
                 try:
@@ -329,9 +358,10 @@ class PluginManager:
 
                 self._loaded.append(_LoadedPlugin(instance=instance, module=mod))
 
-            self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
+            # Sort using manifest priority if present, fallback 100
+            self._loaded.sort(key=lambda lp: getattr(lp.instance, '_manifest_priority', 100))
             if self.verbose:
-                self._log("[PLUGIN] Loaded: " + ", ".join(p.instance.name for p in self._loaded) or "(none)")
+                self._log("[PLUGIN] Loaded: " + ", ".join(getattr(p.instance, 'name', '?') for p in self._loaded) or "(none)")
 
     # ------------------------------------------------------------------
     # New configuration based loading
@@ -357,17 +387,19 @@ class PluginManager:
         with self._lock:
             self._ctx = context
             # Perform a dependency-aware multi-pass load.
-            pending: dict[str, tuple[dict, ModuleType | None, Plugin | None]] = {}
+            manifests = context.get('plugin_manifests', {}) if isinstance(context, dict) else {}
+            pending: dict[str, tuple[dict, ModuleType | None, Plugin | None, dict]] = {}
             for module_name, pconf in config.items():
                 if not isinstance(pconf, dict) or not pconf.get("enabled", False):
                     continue
-                pending[module_name] = (pconf, None, None)
+                manifest = manifests.get(module_name, {}) if isinstance(manifests, dict) else {}
+                pending[module_name] = (pconf, None, None, manifest)
 
             progressed = True
             while progressed and pending:
                 progressed = False
                 for module_name in list(pending.keys()):
-                    pconf, mod_ref, inst_ref = pending[module_name]
+                    pconf, mod_ref, inst_ref, manifest = pending[module_name]
                     mod_qual = f"plugins.{module_name}"
                     if mod_ref is None:
                         try:
@@ -391,24 +423,43 @@ class PluginManager:
                             self._log(f"[PLUGIN] No plugin object found in {mod_qual}")
                             del pending[module_name]
                             continue
-                    # Check dependencies
-                    reqs = getattr(inst_ref, 'requires', None) or []
+                    # Apply manifest metadata before dependency resolution
+                    try:
+                        if manifest:
+                            if 'priority' in manifest:
+                                try: inst_ref._manifest_priority = int(manifest['priority'])
+                                except Exception: pass
+                            if 'requires' in manifest and isinstance(manifest.get('requires'), list):
+                                try: inst_ref._manifest_requires = list(manifest['requires'])
+                                except Exception: pass
+                            if 'name' in manifest:
+                                try: inst_ref.name = manifest['name']
+                                except Exception: pass
+                            if 'config_schema' in manifest and isinstance(manifest.get('config_schema'), dict):
+                                try: inst_ref._manifest_config_schema = manifest['config_schema']
+                                except Exception: pass
+                    except Exception:
+                        pass
+                    # Check dependencies (could be from manifest or class attribute)
+                    reqs = getattr(inst_ref, '_manifest_requires', None) or []
                     unmet = [r for r in reqs if not self._is_module_loaded(r)]
                     if unmet:
                         # Dependency not yet loaded; skip this round
-                        pending[module_name] = (pconf, mod_ref, inst_ref)
+                        pending[module_name] = (pconf, mod_ref, inst_ref, manifest)
                         continue
                     # Apply config
                     if "priority" in pconf:
-                        try:
-                            inst_ref.priority = int(pconf["priority"])
-                        except Exception:
-                            pass
+                        try: inst_ref._manifest_priority = int(pconf["priority"])
+                        except Exception: pass
                     inst_ref.config = pconf
                     if "options" in pconf and isinstance(pconf["options"], dict):
                         inst_ref.options = pconf["options"]
                     # Load
                     try:
+                        try:
+                            setattr(inst_ref, '_plugin_manager', self)
+                        except Exception:
+                            pass
                         inst_ref.on_load(context)
                     except Exception as e:
                         self._log(f"[PLUGIN] on_load error in {inst_ref.name}: {e}")
@@ -427,8 +478,8 @@ class PluginManager:
                     progressed = True
             # Report unresolved dependencies
             for leftover in pending.keys():
-                self._log(f"[PLUGIN] Skipped '{leftover}' due to unmet dependencies: {getattr(pending[leftover][2], 'requires', None)}")
-            self._loaded.sort(key=lambda lp: getattr(lp.instance, "priority", 100))
+                self._log(f"[PLUGIN] Skipped '{leftover}' due to unmet dependencies: {getattr(pending[leftover][2], '_manifest_requires', None)}")
+            self._loaded.sort(key=lambda lp: getattr(lp.instance, '_manifest_priority', 100))
             if self.verbose:
                 self._log("[PLUGIN] Loaded (config): " + ", ".join(p.instance.name for p in self._loaded) or "(none)")
 
@@ -537,15 +588,11 @@ class PluginManager:
         return "Plugin not loaded or without info."
     
     def get_plugin_config_schema(self, name: str) -> dict:
-        """Get configuration schema for a specific plugin by name."""
+        """Get configuration schema (manifest-defined) for a specific plugin by module name."""
         for lp in self._loaded:
             module_short_name = lp.module.__name__.split('.')[-1]
             if module_short_name == name:
-                try:
-                    return lp.instance.get_config_schema()
-                except Exception as e:
-                    self._log(f"[PLUGIN] get_config_schema error in {lp.instance.name}: {e}")
-                    return {}
+                return getattr(lp.instance, '_manifest_config_schema', {}) or {}
         return {}
     
     def get_plugin_config_value(self, plugin_name: str, config_key: str, default=None):
@@ -589,20 +636,38 @@ class PluginManager:
     # Event Bus
     # ------------------------------------------------------------------
     def subscribe_event(self, event: str, handler) -> None:
-        """Subscribe a handler(event_name: str, data: dict) to an event."""
-        with self._lock:
-            self._event_handlers.setdefault(event, []).append(handler)
+        """Subscribe a handler(event_name: str, data: dict) to an event (supports wildcards)."""
+        if self._event_bus is not None:
+            self._event_bus.subscribe(event, handler)
+
+    def once_event(self, event: str, handler) -> None:
+        if self._event_bus is not None:
+            try:
+                self._event_bus.once(event, handler)
+            except Exception:
+                self._log(f"[PLUGIN] event bus once error for {event}")
 
     def emit_event(self, event: str, **data) -> None:
-        """Emit an event to all subscribers."""
-        handlers = []
-        with self._lock:
-            handlers = list(self._event_handlers.get(event, []))
-        for h in handlers:
+        """Emit an event to all subscribers (wildcard patterns honored)."""
+        if self._event_bus is not None:
             try:
-                h(event, data)
+                self._event_bus.emit(event, **data)
             except Exception:
-                self._log(f"[PLUGIN] event handler error for {event}")
+                self._log(f"[PLUGIN] event bus emit error for {event}")
+
+    def unsubscribe_event(self, handler) -> None:
+        if self._event_bus is not None:
+            try:
+                self._event_bus.unsubscribe(handler)
+            except Exception:
+                self._log("[PLUGIN] event bus unsubscribe error")
+
+    def unsubscribe_event_pattern(self, pattern: str) -> None:
+        if self._event_bus is not None:
+            try:
+                self._event_bus.unsubscribe_pattern(pattern)
+            except Exception:
+                self._log("[PLUGIN] event bus unsubscribe_pattern error")
 
     # ------------------------------------------------------------------
     # Helper utilities

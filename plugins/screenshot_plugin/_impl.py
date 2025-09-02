@@ -16,8 +16,6 @@ from datetime import datetime
 from plugins.base import Plugin
 
 class ScreenshotPlugin(Plugin):
-    name = "Screenshot"
-    priority = 120
 
     def __init__(self):
         self.ctx = None

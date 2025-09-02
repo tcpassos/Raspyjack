@@ -21,21 +21,22 @@ Modular plugin system for RaspyJack that allows adding functionality without mod
 
 ## 📁 Plugin Structure
 
-Each plugin is a **Python package** with standardized structure:
+Each plugin is a **Python package** with standardized structure (manifest‑driven configuration):
 
 ```
 plugins/
-  my_plugin/
-    __init__.py        # Entry point (required)
-    _impl.py          # Plugin implementation (recommended)
-    bin/              # Globally exposed executables (optional)
-      MY_COMMAND
-      OTHER_CMD
-    helpers/          # Auxiliary modules (optional)
-      utils.py
-      constants.py
-    config.json       # Specific configuration (optional)
-    README.md         # Plugin documentation (optional)
+    my_plugin/
+        __init__.py        # Entry point (required) – must expose `plugin`
+        _impl.py           # Implementation (recommended) – logic & hooks
+        plugin.json        # Manifest: name, description, priority, requires,
+                                             #           events.emits/listens, config_schema, etc.
+        bin/               # (Optional) Executables auto‑exposed globally
+            MY_COMMAND
+            OTHER_CMD
+        helpers/           # (Optional) Support modules
+            utils.py
+            constants.py
+        README.md          # (Optional) Plugin-specific docs
 ```
 
 ### `__init__.py` File (Required)
@@ -48,12 +49,9 @@ from ._impl import plugin
 from plugins.base import Plugin
 
 class MyPlugin(Plugin):
-    name = "MyPlugin"
-    priority = 100
-    
     def on_load(self, context):
-        print(f"[{self.name}] Plugin loaded!")
-    
+        print(f"[{self.name}] Plugin loaded! context keys: {list(context.keys())[:5]} ...")
+
     def get_info(self):
         return "My custom plugin"
 
@@ -131,8 +129,8 @@ example_plugin/
      cp -r plugins/example_plugin plugins/my_new_plugin
      ```
 2. Rename class `ExamplePlugin` → `MyNewPlugin` inside `_impl.py`
-3. Change `name = "MyNewPlugin"` and optionally `priority`
-4. Adjust `get_config_schema()` with your boolean options
+3. Edit `plugin.json` (fields: name, description, priority, requires, events, config_schema)
+4. Define options under `config_schema` inside `plugin.json` (no Python method)
 5. Remove hooks you don't need to keep it lean
 6. (Optional) Add commands under `bin/` and helpers under `helpers/`
 7. Restart RaspyJack → plugin auto‑discovered (disabled by default)
@@ -155,13 +153,13 @@ example_plugin/
 
 ## ⚙️ Configuration
 
-Configure plugins in `plugins/plugins_conf.json`:
+Configure plugins in `plugins/plugins_conf.json` (runtime merges manifest + state):
 
 ```json
 {
-  "my_plugin": {
-    "enabled": true,
-    "priority": 50,
+    "my_plugin": {
+        "enabled": true,
+        "priority": 50,  // Optional override; manifest defines default
     "options": {
       "interval": 5,
       "text_color": "white",
@@ -185,7 +183,7 @@ Configure plugins in `plugins/plugins_conf.json`:
 
 ### Plugin Configuration Schema
 
-Plugins declare configuration options via `get_config_schema()`. Each option has:
+Plugins declare configuration options in their `plugin.json` under `config_schema`. Each option has:
 
 ```
 {
@@ -209,72 +207,46 @@ Type semantics:
     - `list`: Typically list of strings (edit JSON manually). Example: payload names.
     - `number`: JSON number (int ou float). Ajuste via arquivo JSON.
 
-Example (multi-type):
-```python
-def get_config_schema(self):
-        return {
-                "enable_feature": {
-                        "type": "boolean",
-                        "label": "Enable Feature",
-                        "description": "Turn feature on/off",
-                        "default": True
-                },
-                "interface": {
-                        "type": "string",
-                        "label": "Interface",
-                        "description": "Network interface to monitor (edit JSON)",
-                        "default": "eth0"
-                },
-                "connect_payloads": {
-                        "type": "list",
-                        "label": "Connect Payloads",
-                        "description": "Payloads to run on connect (edit JSON)",
-                        "default": []
+Example manifest (multi-type config_schema):
+```jsonc
+{
+    "name": "net_tools",
+    "description": "Network helper tools",
+    "priority": 120,
+    "events": {
+        "emits": ["net_tools.scan.started", "net_tools.scan.finished"],
+        "listens": ["ethernet.connected", "wifi.connected"]
+    },
+    "config_schema": {
+        "enable_feature": {
+            "type": "boolean",
+            "label": "Enable Feature",
+            "description": "Turn feature on/off",
+            "default": true
+        },
+        "interface": {
+            "type": "string",
+            "label": "Interface",
+            "description": "Network interface to monitor (edit JSON)",
+            "default": "eth0"
+        },
+        "connect_payloads": {
+            "type": "list",
+            "label": "Connect Payloads",
+            "description": "Payloads to run on connect (edit JSON)",
+            "default": []
         },
         "interval_secs": {
             "type": "number",
             "label": "Interval Seconds",
             "description": "Polling interval (edit JSON)",
             "default": 5
-                }
         }
+    }
+}
 ```
 
-Below is a simpler boolean-only example used by older plugins:
-
-```python
-class MyPlugin(Plugin):
-    def get_config_schema(self) -> dict:
-        """Define plugin configuration options for UI."""
-        return {
-            "enable_feature": {
-                "type": "boolean",
-                "label": "Enable Feature",
-                "description": "Enable this plugin feature",
-                "default": True
-            },
-            "show_notifications": {
-                "type": "boolean", 
-                "label": "Show Notifications",
-                "description": "Display notifications in UI",
-                "default": False
-            }
-        }
-    
-    def get_config_value(self, key: str, default=None):
-        """Get current configuration value."""
-        if hasattr(self, 'config') and self.config:
-            return self.config.get('options', {}).get(key, default)
-        return default
-    
-    def set_config_value(self, key: str, value) -> None:
-        """Set configuration value (handled by PluginManager)."""
-        pass
-    
-    def on_config_changed(self, key: str, old_value, new_value) -> None:
-        """Called when configuration changes via UI."""
-        print(f"[{self.name}] Config {key}: {old_value} -> {new_value}")
-```
+Legacy Python method `get_config_schema()` was removed. Define schemas only in the manifest.
 
 ### UI Integration
 
@@ -306,43 +278,53 @@ def on_tick(self, dt):
 
 ## 🚦 Event Bus
 
-An in-process event bus lets plugins publish and subscribe to named events without
-tight coupling.
+Decoupled publish/subscribe system for intra‑plugin communication. Event names
+use dotted identifiers (`domain.action`) and support wildcard subscription.
 
-### Emitting an Event
+### Recommended Convenience API (inside a Plugin subclass)
 ```python
-self.context['plugin_manager'].emit_event('ethernet.connected', interface='eth0', ip='192.168.0.10')
-```
-
-### Subscribing to an Event
-```python
-def on_eth(event_name, data):
-        print('Ethernet connected:', data)
-
 def on_load(self, ctx):
-        mgr = ctx.get('plugin_manager')
-        mgr.subscribe_event('ethernet.connected', on_eth)
+    # Subscribe
+    self.on('ethernet.connected', self._on_eth)
+    # One‑shot subscription
+    self.once('wifi.connected', lambda evt, data: print('WiFi once:', data))
+    # Emit custom event
+    self.emit('example.started', ts=time.time())
+
+def _on_eth(self, event_name, data):
+    print('Ethernet up:', data['interface'], data.get('ip'))
 ```
 
-Handler signature: `handler(event_name: str, data: dict)`.
+### Wildcards
+```python
+self.on('ethernet.*', handler)         # all ethernet events
+self.on('*.connected', handler)        # any <domain>.connected
+self.on('battery.*.warn', handler)     # multi‑segment match
+```
 
-Current events (core / example):
-    - `ethernet.connected` { interface, ip }
-    - `ethernet.disconnected` { interface, ip=None }
+### Handler Signature
+`handler(event_name: str, data: dict)` — return value ignored, exceptions logged.
 
-You can freely define your own event names (recommend dot notation: `module.topic`).
+### Core Example Events
+- `ethernet.connected` { interface, ip }
+- `ethernet.disconnected` { interface, ip=None }
+
+Define any additional events you need; document them in your plugin manifest under `events.emits` for clarity.
 
 ---
 
 ## 🔗 Plugin Dependencies
 
-A plugin can declare other plugin modules it depends on via a class attribute `requires`:
+A plugin declares dependencies in its `plugin.json` manifest (`requires` array):
 
-```python
-class NetActionPlugin(Plugin):
-        name = "NetActionPlugin"
-        priority = 210
-        requires = ['ethernet_hook']  # directory/module names
+```jsonc
+{
+    "name": "net_action_plugin",
+    "priority": 210,
+    "requires": ["ethernet_hook"],
+    "events": { "emits": ["net.action"], "listens": ["ethernet.connected"] },
+    "config_schema": {}
+}
 ```
 
 Dependency loading behavior:
@@ -379,7 +361,6 @@ Called every time the Plugins menu is rebuilt, so keep it fast and side‑effect
 from plugins.base import Plugin
 
 class NetToolsPlugin(Plugin):
-    name = "net_tools"
 
     def provide_menu_items(self):
         return [
@@ -621,9 +602,7 @@ from ._impl import plugin
 from plugins.base import Plugin
 import time
 
-class StatusPlugin(Plugin):
-    name = "Status"
-    priority = 30
+class StatusPlugin(Plugin):  # metadata provided by plugin.json
     
     def on_load(self, context):
         self.start_time = time.time()
@@ -694,102 +673,83 @@ plugins/
     _impl.py
 ```
 
+**`plugin.json`:**
+```jsonc
+{
+  "name": "ConfigurablePlugin",
+  "description": "Shows how runtime reacts to manifest config_schema toggles",
+  "priority": 50,
+  "config_schema": {
+    "enable_monitoring": {
+      "type": "boolean",
+      "label": "Enable Monitoring",
+      "description": "Enable background monitoring",
+      "default": true
+    },
+    "show_overlay": {
+      "type": "boolean",
+      "label": "Show HUD Overlay",
+      "description": "Display information on screen",
+      "default": true
+    },
+    "enable_notifications": {
+      "type": "boolean",
+      "label": "Enable Notifications",
+      "description": "Show status notifications",
+      "default": false
+    }
+  }
+}
+```
+
 **`_impl.py`:**
 ```python
 from plugins.base import Plugin
 import time
 
 class ConfigurablePlugin(Plugin):
-    name = "ConfigurablePlugin"
-    priority = 50
-    
+
     def __init__(self):
-        super().__init__()
         self.counter = 0
         self.last_notify = 0
-    
-    def get_config_schema(self) -> dict:
-        """Define UI configuration options."""
-        return {
-            "enable_monitoring": {
-                "type": "boolean",
-                "label": "Enable Monitoring",
-                "description": "Enable background monitoring",
-                "default": True
-            },
-            "show_overlay": {
-                "type": "boolean",
-                "label": "Show HUD Overlay", 
-                "description": "Display information on screen",
-                "default": True
-            },
-            "enable_notifications": {
-                "type": "boolean",
-                "label": "Enable Notifications",
-                "description": "Show status notifications",
-                "default": False
-            }
-        }
-    
+        self.context = None
+
     def on_load(self, context):
         self.context = context
-        print(f"[{self.name}] Loaded with configuration system")
-    
+        print(f"[{self.name}] Loaded with manifest config schema")
+
     def on_tick(self, dt):
-        # Check if monitoring is enabled
         if not self.get_config_value("enable_monitoring", True):
             return
-        
         self.counter += dt
-        
-        # Check if notifications are enabled
         if self.get_config_value("enable_notifications", False):
-            if time.time() - self.last_notify > 10:  # Every 10 seconds
+            if time.time() - self.last_notify > 10:
                 print(f"[{self.name}] Monitoring active: {self.counter:.1f}s")
                 self.last_notify = time.time()
-    
+
     def on_render_overlay(self, image, draw):
-        # Check if overlay is enabled
         if not self.get_config_value("show_overlay", True):
             return
-        
         if self.get_config_value("enable_monitoring", True):
             draw.text((100, 20), f"Monitor: {self.counter:.1f}s", fill='yellow')
-    
+
     def on_config_changed(self, key: str, old_value, new_value):
-        """React to configuration changes immediately."""
         print(f"[{self.name}] Config changed: {key} = {new_value}")
-        
-        if key == "enable_monitoring":
-            if new_value:
-                print(f"[{self.name}] Monitoring enabled")
-                self.counter = 0  # Reset counter
-            else:
-                print(f"[{self.name}] Monitoring disabled")
-        
-        elif key == "show_overlay":
-            status = "enabled" if new_value else "disabled"
-            print(f"[{self.name}] HUD overlay {status}")
-        
-        elif key == "enable_notifications":
-            status = "enabled" if new_value else "disabled"
-            print(f"[{self.name}] Notifications {status}")
-    
+        if key == "enable_monitoring" and new_value:
+            self.counter = 0
+
     def get_info(self):
-        # Show current configuration status
         monitoring = self.get_config_value("enable_monitoring", True)
         overlay = self.get_config_value("show_overlay", True)
         notifications = self.get_config_value("enable_notifications", False)
-        
-        info_lines = [
+        return "\n".join([
             f"Counter: {self.counter:.1f}s",
             "",
             "Configuration:",
             f"• Monitoring: {'ON' if monitoring else 'OFF'}",
             f"• HUD Overlay: {'ON' if overlay else 'OFF'}",
             f"• Notifications: {'ON' if notifications else 'OFF'}",
-        ]
-        return "\n".join(info_lines)
+        ])
 
 plugin = ConfigurablePlugin()
 ```
@@ -809,61 +769,67 @@ Plugins → ConfigurablePlugin →
 
 Current included plugins use simplified, focused configurations:
 
-**Discord Plugin** (`discord_notifier_plugin`):
-```python
-def get_config_schema(self):
-    return {
+**Discord Plugin (excerpt plugin.json)**
+```jsonc
+{
+    "name": "discord_notifier_plugin",
+    "config_schema": {
         "nmap_notifications": {
             "type": "boolean",
-            "label": "Nmap Notifications", 
+            "label": "Nmap Notifications",
             "description": "Send Discord notifications when Nmap scans complete",
-            "default": True
+            "default": true
         }
     }
+}
 ```
 
-**Temperature Plugin** (`temperature_plugin`):
-```python
-def get_config_schema(self):
-    return {
+**Temperature Plugin (excerpt plugin.json)**
+```jsonc
+{
+    "name": "temperature_plugin",
+    "config_schema": {
         "enable_display": {
             "type": "boolean",
             "label": "Show Temperature HUD",
-            "description": "Display temperature in corner of screen", 
-            "default": True
+            "description": "Display temperature in corner of screen",
+            "default": true
         },
         "show_unit": {
             "type": "boolean",
             "label": "Show Temperature Unit",
             "description": "Display °C unit with temperature value",
-            "default": True
+            "default": true
         }
     }
+}
 ```
 
-**Battery Plugin** (`battery_status_plugin`):
-```python
-def get_config_schema(self):
-    return {
+**Battery Plugin (excerpt plugin.json)**
+```jsonc
+{
+    "name": "battery_status_plugin",
+    "config_schema": {
         "show_percentage": {
             "type": "boolean",
             "label": "Show Battery Percentage",
             "description": "Display battery percentage in overlay",
-            "default": True
+            "default": true
         },
         "show_icon": {
-            "type": "boolean", 
+            "type": "boolean",
             "label": "Show Battery Icon",
             "description": "Display battery status icon",
-            "default": True
+            "default": true
         },
         "enable_monitoring": {
             "type": "boolean",
-            "label": "Enable Battery Monitoring", 
+            "label": "Enable Battery Monitoring",
             "description": "Monitor battery status via I2C",
-            "default": True
+            "default": true
         }
     }
+}
 ```
 
 ---
@@ -898,7 +864,7 @@ def get_config_schema(self):
 ### Plugin Lifecycle with Configuration
 ```python
 1. Plugin loaded → on_load() called
-2. Config schema retrieved → get_config_schema()
+2. Config schema retrieved from plugin.json manifest
 3. UI menu built with checkboxes
 4. User toggles checkbox → on_toggle callback
 5. Config updated and saved → set_config_value()

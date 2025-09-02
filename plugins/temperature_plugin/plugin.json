@@ -1,0 +1,35 @@
+{
+  "name": "Temperature",
+  "version": "0.1.0",
+  "author": "tcpassos",
+  "description": "Display CPU temperature overlay",
+  "priority": 30,
+  "requires": [],
+  "permissions": {
+    "filesystem": true
+  },
+  "events": {
+    "emits": ["temperature.updated"],
+    "listens": []
+  },
+  "config_schema": {
+    "refresh_interval": {
+      "type": "number",
+      "label": "Refresh Interval (s)",
+      "description": "Polling interval for temperature sensor",
+      "default": 2.0
+    },
+    "text_color": {
+      "type": "string",
+      "label": "Text Color",
+      "description": "Color name for temperature text",
+      "default": "white"
+    },
+    "show_unit": {
+      "type": "boolean",
+      "label": "Show Unit",
+      "description": "Display degree unit",
+      "default": true
+    }
+  }
+}

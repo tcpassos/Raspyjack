@@ -4,8 +4,6 @@ from typing import Any, Dict
 from plugins.base import Plugin
 
 class OpenAIIntegrationPlugin(Plugin):
-    name = "openai_integration_plugin"
-    priority = 100
 
     # Internal state variables
     def __init__(self):
@@ -13,42 +11,6 @@ class OpenAIIntegrationPlugin(Plugin):
         self.prompt_verbosity: str = 'normal'  # minimal|normal|full
         self._verbosity_item = None  # MenuItem instance for dynamic label
 
-    # ------------------------------------------------------------------
-    # Configuration
-    # ------------------------------------------------------------------
-    def get_config_schema(self) -> dict:
-        return {
-            "api_key": {
-                "type": "string",
-                "label": "API Key",
-                "description": "Your API key for accessing the service",
-                "default": "",
-            },
-            "language": {
-                "type": "string",
-                "label": "Language",
-                "description": "Preferred language for responses",
-                "default": "en"
-            },
-            "model": {
-                "type": "string",
-                "label": "Model",
-                "description": "Preferred language for responses",
-                "default": "gpt-5-nano"
-            },
-            "auto_analyze_scans": {
-                "type": "boolean",
-                "label": "Auto Analyze Scans",
-                "description": "Automatically analyze Nmap scans using LLM after completion",
-                "default": False,
-            },
-            "prompt_verbosity": {
-                "type": "string",
-                "label": "Prompt Verbosity",
-                "description": "Verbosity level for AI prompts (minimal|normal|full)",
-                "default": "normal",
-            }
-        }
 
     def on_load(self, ctx: dict) -> None:
         self.ctx = ctx
@@ -283,9 +245,7 @@ class OpenAIIntegrationPlugin(Plugin):
             "- Manual and automatic scan/file analysis (Nmap + extensible)",
             "- AI result saved in loot directories",
             "- PROMPT_OPENAI CLI tool",
-            "- Configurable model and language",
-            "",
-            "Author: tcpassos"
+            "- Configurable model and language"
         ]
         return '\n'.join(lines)
     
