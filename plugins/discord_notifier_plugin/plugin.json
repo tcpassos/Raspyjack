@@ -1,7 +1,7 @@
 {
   "name": "Discord Notifier",
   "version": "0.1.0",
-  "author": "7h30th3r0n3 & tcpassos",
+  "author": "Hosseios & tcpassos",
   "description": "Send Discord webhooks for completed scans and provide loot upload actions",
   "priority": 200,
   "requires": [],
