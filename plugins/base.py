@@ -43,13 +43,6 @@ Life‑cycle / callback methods (all optional):
         own (e.g., small HUD elements). You can call other helpers from
         context if needed.
 
-    on_before_exec_payload(payload_name: str) -> None
-        Fired just before a payload script is executed.
-
-    on_after_exec_payload(payload_name: str, success: bool) -> None
-        Fired after the payload returns (success indicates no exception in the
-        wrapper, not inside the payload itself necessarily).
-
     provide_menu_items() -> list
         Return a list of custom menu entries to be added to this
         plugin's submenu in the UI. Each entry can be one of:
@@ -61,20 +54,12 @@ Life‑cycle / callback methods (all optional):
         diagnostics) without modifying the core menu system. Called each time
         plugin menus are rebuilt, so it should be fast and side‑effect free.
 
-Design goals:
-- Canonical package layout per plugin (metadata now exclusively via plugin.json manifest):
-
-        plugins/
-            my_plugin/
-                __init__.py        # must expose `plugin` instance or Plugin subclass
-                bin/                # optional: executable scripts to be exposed
-                    MY_COMMAND      # becomes available under top-level bin/
-                helpers/            # optional support modules imported by __init__
-                ...
-
-- Safe: all callbacks are wrapped in try/except so one misbehaving plugin
-    does not break the main UI.
-- Order: dispatch ordering determined by manifest `priority` (lower first; default 100) applied at load.
+Runtime events (now dispatched exclusively through the event bus; subscribe
+with self.on(pattern, handler)):
+    payload.before_exec   data: { payload_name }
+    payload.after_exec    data: { payload_name, success }
+    scan.before           data: { label, args }
+    scan.after            data: { label, args, result_path }
 
 Per-plugin bin exposure:
 If a plugin package contains a `bin` directory, its executable files are
@@ -145,10 +130,6 @@ class Plugin:
     def on_tick(self, dt: float) -> None: ...
     def on_button_event(self, event: dict) -> None: ...
     def on_render_overlay(self, image, draw) -> None: ...
-    def on_before_exec_payload(self, payload_name: str) -> None: ...
-    def on_after_exec_payload(self, payload_name: str, success: bool) -> None: ...
-    def on_before_scan(self, label: str, args: list[str]) -> None: ...
-    def on_after_scan(self, label: str, args: list[str], result_path: str) -> None: ...
     def provide_menu_items(self) -> list: return []
     
     def get_info(self) -> str:
@@ -543,36 +524,29 @@ class PluginManager:
         return self._overlay_image
 
     def before_exec_payload(self, payload_name: str) -> None:
-        with self._lock:
-            for lp in self._loaded:
-                try:
-                    lp.instance.on_before_exec_payload(payload_name)
-                except Exception:
-                    self._log(f"[PLUGIN] before_exec error in {lp.instance.name}")
+        # Emit event for payload about to execute
+        try:
+            self.emit_event("payload.before_exec", payload_name=payload_name)
+        except Exception:
+            self._log("[PLUGIN] event emit error (payload.before_exec)")
 
     def after_exec_payload(self, payload_name: str, success: bool) -> None:
-        with self._lock:
-            for lp in self._loaded:
-                try:
-                    lp.instance.on_after_exec_payload(payload_name, success)
-                except Exception:
-                    self._log(f"[PLUGIN] after_exec error in {lp.instance.name}")
+        try:
+            self.emit_event("payload.after_exec", payload_name=payload_name, success=success)
+        except Exception:
+            self._log("[PLUGIN] event emit error (payload.after_exec)")
 
     def before_scan(self, label: str, args: list[str]) -> None:
-        with self._lock:
-            for lp in self._loaded:
-                try:
-                    lp.instance.on_before_scan(label, args)
-                except Exception:
-                    self._log(f"[PLUGIN] before_scan error in {lp.instance.name}")
+        try:
+            self.emit_event("scan.before", label=label, args=args)
+        except Exception:
+            self._log("[PLUGIN] event emit error (scan.before)")
 
     def after_scan(self, label: str, args: list[str], result_path: str) -> None:
-        with self._lock:
-            for lp in self._loaded:
-                try:
-                    lp.instance.on_after_scan(label, args, result_path)
-                except Exception:
-                    self._log(f"[PLUGIN] after_scan error in {lp.instance.name}")
+        try:
+            self.emit_event("scan.after", label=label, args=args, result_path=result_path)
+        except Exception:
+            self._log("[PLUGIN] event emit error (scan.after)")
 
     def get_plugin_info(self, name: str) -> str:
         """Get info string from a specific plugin by name."""

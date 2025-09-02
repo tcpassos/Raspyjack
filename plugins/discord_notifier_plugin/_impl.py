@@ -48,13 +48,16 @@ class DiscordNotifierPlugin(Plugin):
 
     def on_load(self, ctx: dict) -> None:
         self._ctx = ctx
+        # Subscribe to scan completion events
+        self.on("scan.after", self._on_scan_after)
 
-
-    def on_after_scan(self, label: str, args: list[str], result_path: str) -> None:
-        # Check if nmap notifications are enabled
+    def _on_scan_after(self, topic: str, data: dict) -> None:
+        label = data.get('label')
+        result_path = data.get('result_path')
+        if not label or not result_path:
+            return
         if not self.get_config_value("nmap_notifications", True):
             return
-            
         webhook_url = get_discord_webhook_url()
         if not webhook_url:
             return

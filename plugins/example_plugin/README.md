@@ -17,8 +17,8 @@ example_plugin/
 
 ## Quick Start
 1. Duplicate this folder and rename it, e.g. `my_new_plugin`.
-2. Edit `_impl.py`: rename `ExamplePlugin` and adjust `name` + `priority`.
-3. Create/modify `plugin.json` manifest: add `config_schema` with your options + `priority`.
+2. Edit `_impl.py`: rename `ExamplePlugin` and adapt logic.
+3. Edit `plugin.json` manifest: set fields (name, description, priority, requires, events, config_schema).
 4. Implement any lifecycle hooks you need.
 5. Start RaspyJack; the new plugin will be auto‑detected and added to `plugins_conf.json` (disabled by default).
 6. Enable it via: Menu > Plugins > your_plugin > Enable Plugin, then Save & Restart.
@@ -60,12 +60,24 @@ You can safely hand‑edit `priority` and `enabled`. Options should usually be t
 | `on_button_event(event)` | React to high-level button events (PRESS, LONG_PRESS, CLICK, etc.). |
 | `emit()/on()/once()/off()` | Event bus helpers for publish/subscribe (see Event Bus section). |
 | `on_render_overlay(image, draw)` | Draw small overlay elements (text/icon). Do not clear whole screen. |
-| `on_before_exec_payload(name)` | Called before a payload is executed. |
-| `on_after_exec_payload(name, success)` | After payload completion. |
-| `on_before_scan(label, args)` | Before an Nmap scan starts. |
-| `on_after_scan(label, args, result_path)` | After scan finishes; can parse or notify. |
 | `on_config_changed(key, old, new)` | Respond to UI configuration toggles. |
 | `get_info()` | Return multi‑line status string for the info viewer. |
+
+### Runtime Events (instead of legacy scan/payload hooks)
+Subscribe in `on_load`:
+| Event | Data Keys | Description |
+|-------|-----------|-------------|
+| `payload.before_exec` | `payload_name` | Before a payload runs |
+| `payload.after_exec` | `payload_name`, `success` | After payload wrapper ends |
+| `scan.before` | `label`, `args` | Before a scan starts |
+| `scan.after` | `label`, `args`, `result_path` | After scan finishes |
+
+Example:
+```python
+def on_load(self, ctx):
+  self.on('payload.before_exec', lambda t,d: print('Payload ->', d['payload_name']))
+  self.on('scan.after', lambda t,d: print('Scan done ->', d['result_path']))
+```
 
 ## Adding Executables (bin/)
 Any executable file placed under your plugin's `bin/` directory will be:

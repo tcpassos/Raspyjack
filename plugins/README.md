@@ -444,7 +444,7 @@ def on_tick(self, dt: float) -> None:
     self.counter += dt
 ```
 
-### Hardware Interaction (New pattern)
+### Hardware Interaction
 ```python
 def on_button_event(self, event: dict) -> None:
     """High-level button event.
@@ -466,27 +466,28 @@ def on_render_overlay(self, image, draw) -> None:
     draw.text((100, 10), "Status: OK", fill='green')
 ```
 
-### Payload Execution
+### Runtime Events
+
+Subscribe via the event bus instead of overriding methods:
+
+| Event                | Data Keys                               | Description                         |
+|----------------------|------------------------------------------|-------------------------------------|
+| `payload.before_exec`| `payload_name`                           | Before a payload script runs        |
+| `payload.after_exec` | `payload_name`, `success`                | After payload wrapper completes     |
+| `scan.before`        | `label`, `args`                          | Before starting a scan (e.g. Nmap)  |
+| `scan.after`         | `label`, `args`, `result_path`           | After scan finishes (file saved)    |
+
+Example subscription:
 ```python
-def on_before_exec_payload(self, payload_name: str) -> None:
-    """Before executing payload"""
-    print(f"Executing: {payload_name}")
+def on_load(self, ctx):
+    self.on('payload.before_exec', self._log_before)
+    self.on('scan.after', self._after_scan)
 
-def on_after_exec_payload(self, payload_name: str, success: bool) -> None:
-    """After payload execution"""
-    status = "✅" if success else "❌"
-    print(f"{status} {payload_name}")
-```
+def _log_before(self, topic, data):
+    print('About to run payload:', data['payload_name'])
 
-### Scans (Nmap)
-```python
-def on_before_scan(self, label: str, args: list[str]) -> None:
-    """Before Nmap scan"""
-    print(f"Starting scan: {label}")
-
-def on_after_scan(self, label: str, args: list[str], result_path: str) -> None:
-    """After Nmap scan completion"""
-    print(f"Scan saved to: {result_path}")
+def _after_scan(self, topic, data):
+    print('Scan finished ->', data['result_path'])
 ```
 
 ### Information
