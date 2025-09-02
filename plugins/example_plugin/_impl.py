@@ -17,10 +17,12 @@ Lifecycle Hooks (all optional):
   on_tick(dt)                             - Called periodically (~every 0.5s by default)
   on_button_event(event)                  - React to button events (new preferred method)
   on_render_overlay(image, draw)          - Draw lightweight overlay elements
-  on_before_exec_payload(name)            - Before starting a payload
-  on_after_exec_payload(name, success)    - After payload completes
-  on_before_scan(label, args)             - Before starting an Nmap scan
-  on_after_scan(label, args, result_path) - After scan finishes
+
+Runtime Events (subscribe via self.on(pattern, handler)):
+    payload.before_exec   -> handler(topic, data{payload_name})
+    payload.after_exec    -> handler(topic, data{payload_name, success})
+    scan.before           -> handler(topic, data{label, args})
+    scan.after            -> handler(topic, data{label, args, result_path})
 
 Configuration Schema:
   Declared statically in the plugin's `plugin.json` manifest under `config_schema`.
@@ -71,6 +73,11 @@ class ExamplePlugin(Plugin):
         self._last_tick = time.time()
         self._counter = 0
         self._enabled_runtime_feature = self.get_config_value("enable_runtime_feature", True)
+        # Subscribe to runtime events
+        self.on("payload.before_exec", self._on_payload_before)
+        self.on("payload.after_exec", self._on_payload_after)
+        self.on("scan.before", self._on_scan_before)
+        self.on("scan.after", self._on_scan_after)
         print(f"[{self.name}] Loaded (runtime_feature={self._enabled_runtime_feature})")
 
     def on_unload(self) -> None:
@@ -106,17 +113,19 @@ class ExamplePlugin(Plugin):
         text = f"EX:{self._counter}"  # keep short to avoid layout conflicts
         draw.text((30, 0), text, fill="white")
 
-    def on_before_exec_payload(self, payload_name: str) -> None:
-        print(f"[{self.name}] Before payload: {payload_name}")
+    # (Legacy scan/payload hooks removed — using event bus subscriptions instead.)
 
-    def on_after_exec_payload(self, payload_name: str, success: bool) -> None:
-        print(f"[{self.name}] After payload: {payload_name} (success={success})")
+    def _on_payload_before(self, topic: str, data: dict):
+        print(f"[{self.name}] Before payload: {data.get('payload_name')}")
 
-    def on_before_scan(self, label: str, args: list[str]) -> None:
-        print(f"[{self.name}] Before scan: {label} args={args}")
+    def _on_payload_after(self, topic: str, data: dict):
+        print(f"[{self.name}] After payload: {data.get('payload_name')} (success={data.get('success')})")
 
-    def on_after_scan(self, label: str, args: list[str], result_path: str) -> None:
-        print(f"[{self.name}] After scan: {label} -> {result_path}")
+    def _on_scan_before(self, topic: str, data: dict):
+        print(f"[{self.name}] Before scan: {data.get('label')} args={data.get('args')}")
+
+    def _on_scan_after(self, topic: str, data: dict):
+        print(f"[{self.name}] After scan: {data.get('label')} -> {data.get('result_path')}")
 
     # ------------------------------------------------------------------
     # Config change reaction

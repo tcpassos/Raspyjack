@@ -56,6 +56,8 @@ class OpenAIIntegrationPlugin(Plugin):
                 self.prompt_verbosity = 'normal'
         except Exception:
             self.prompt_verbosity = 'normal'
+        # Subscribe to scan completion if auto analyze feature is enabled later
+        self.on("scan.after", self._on_scan_after_event)
 
     # ---------------- Verbosity handling -----------------
     def _cycle_verbosity(self):
@@ -189,7 +191,12 @@ class OpenAIIntegrationPlugin(Plugin):
             items.append(("Last AI Report", self._menu_show_last_ai_report, '\uf15c', "View most recent AI output"))
         return items
 
-    def on_after_scan(self, label, args, result_path):
+    def _on_scan_after_event(self, topic: str, data: dict) -> None:
+        label = data.get('label')
+        result_path = data.get('result_path')
+        args = data.get('args') or []
+        if not label or not result_path:
+            return
         if not self.features_enabled:
             return
         if not self.get_config_value("auto_analyze_scans", False):
@@ -199,21 +206,16 @@ class OpenAIIntegrationPlugin(Plugin):
             return
         from ui.widgets import dialog_info, yn_dialog, scrollable_text_lines
         import os
-        # Read scan file
         try:
             with open(result_path, 'r', encoding='utf-8') as f:
-                # We pass the path to analyze_file so only need path here
                 pass
         except Exception as e:
             dialog_info(wctx, f"Error reading scan file: {e}", wait=True, center=True)
             return
-        # Infer prompt base & load content
         category = self._infer_prompt_category(label, args or [])
         prompt_base = f"{category}_{self.prompt_verbosity}"
         prompt_content = self._load_prompt_content(prompt_base)
-        # Run analysis (file path provided, helper reads file content itself)
         ai_result = self.openai_helper.analyze_file(result_path, prompt_content, wctx=wctx)
-        # Save with prompt base in name
         out_name = os.path.splitext(os.path.basename(result_path))[0] + f'_{prompt_base}_ai.txt'
         root_path = self._get_root_path()
         ai_dir = self._get_ai_output_dir(root_path) if root_path else os.path.dirname(result_path)
