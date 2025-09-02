@@ -1,0 +1,35 @@
+{
+  "name": "Battery Status",
+  "version": "0.1.0",
+  "author": "tcpassos",
+  "description": "Display battery voltage-derived percentage & icon overlay using INA219 sensor",
+  "priority": 40,
+  "requires": [],
+  "permissions": {
+    "i2c": true
+  },
+  "events": {
+    "emits": ["battery.updated"],
+    "listens": []
+  },
+  "config_schema": {
+    "show_percentage": {
+      "type": "boolean",
+      "label": "Show Battery Percentage",
+      "description": "Display battery percentage text in overlay",
+      "default": true
+    },
+    "show_icon": {
+      "type": "boolean",
+      "label": "Show Battery Icon",
+      "description": "Display battery icon graphic in overlay",
+      "default": true
+    },
+    "enable_monitoring": {
+      "type": "boolean",
+      "label": "Enable Battery Monitoring",
+      "description": "Enable battery status monitoring and overlay display",
+      "default": true
+    }
+  }
+}

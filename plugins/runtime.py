@@ -60,7 +60,17 @@ def load_plugins_conf(install_path: str) -> Dict[str, Any]:
             continue  # Not a Python package
         if name in cfg:
             continue  # Already configured
-        # Attempt import to read schema
+        # Read manifest (if present) first to capture config_schema, priority
+        manifest_path = os.path.join(plugin_path, 'plugin.json')
+        manifest = {}
+        if os.path.isfile(manifest_path):
+            try:
+                with open(manifest_path, 'r', encoding='utf-8') as mf:
+                    manifest = json.load(mf)
+            except Exception as e:
+                print(f"[PLUGIN] Failed reading manifest for '{name}': {e}")
+                manifest = {}
+        # Attempt import to let plugin code run minimal init
         try:
             mod = importlib.import_module(f'plugins.{name}')
         except Exception as e:
@@ -79,19 +89,25 @@ def load_plugins_conf(install_path: str) -> Dict[str, Any]:
         if instance is None:
             print(f"[PLUGIN] Auto-discovery could not locate plugin object in '{name}'")
             continue
-        # Build default options from schema
+        # Inject manifest-declared schema onto instance for uniform access
+        if isinstance(manifest.get('config_schema'), dict):
+            try:
+                setattr(instance, '_manifest_config_schema', manifest['config_schema'])
+            except Exception:
+                pass
+        # Build default options from schema (manifest-driven now)
         options = {}
         try:
-            schema = instance.get_config_schema() if hasattr(instance, 'get_config_schema') else {}
+            schema = getattr(instance, '_manifest_config_schema', {}) or {}
             if isinstance(schema, dict):
                 for key, meta in schema.items():
                     if isinstance(meta, dict):
                         options[key] = meta.get('default')
         except Exception as e:
-            print(f"[PLUGIN] Failed reading schema for '{name}': {e}")
+            print(f"[PLUGIN] Failed reading manifest schema for '{name}': {e}")
         entry = {
             "enabled": False,
-            "priority": getattr(instance, 'priority', 100)
+            "priority": manifest.get('priority', getattr(instance, 'priority', 100))
         }
         if options:
             entry['options'] = options
@@ -236,6 +252,53 @@ def save_plugins_conf(cfg: Dict[str, Any], install_path: str) -> None:
         print(f"[PLUGIN] Failed saving plugins_conf: {e}")
 
 # ----------------------------------------------------------------------------
+# Manifest discovery
+# ----------------------------------------------------------------------------
+
+def discover_plugin_manifests(install_path: str) -> dict:
+    """Discover plugin.json manifest files in plugin packages.
+
+    Manifest schema (initial minimal version):
+        {
+          "name": "Human Name",              # optional (fallback to package)
+          "version": "0.1.0",                # optional
+          "description": "...",              # optional
+          "priority": 50,                    # optional override
+          "requires": ["other_plugin"],      # dependencies by package name
+          "permissions": {                   # free-form future use
+              "network": true,
+              "filesystem": true
+          },
+          "events": {                        # optional declared events published/subscribed
+              "emits": ["battery.updated"],
+              "listens": ["system.*"]
+          }
+        }
+    Returns mapping: package_name -> manifest_dict
+    """
+    manifests: dict[str, dict] = {}
+    plugins_root = os.path.join(install_path, 'plugins')
+    if not os.path.isdir(plugins_root):
+        return manifests
+    for name in os.listdir(plugins_root):
+        pdir = os.path.join(plugins_root, name)
+        if not os.path.isdir(pdir):
+            continue
+        if name in ('base', '__pycache__') or name.startswith('_'):
+            continue
+        manifest_path = os.path.join(pdir, 'plugin.json')
+        if not os.path.isfile(manifest_path):
+            continue
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                manifests[name] = data
+        except Exception as e:
+            print(f"[PLUGIN] Failed reading manifest for {name}: {e}")
+    return manifests
+
+# ----------------------------------------------------------------------------
 # Loading / reloading
 # ----------------------------------------------------------------------------
 
@@ -254,11 +317,16 @@ def reload_plugins(current_manager: Optional[PluginManager], install_path: str, 
     # Ensure plugin_manager reference is present in context for inter-plugin communication
     context = dict(context)
     context['plugin_manager'] = manager
+    # Attach manifests & event bus helpers (manager already owns bus)
+    manifests = discover_plugin_manifests(install_path)
+    context['plugin_manifests'] = manifests  # accessible to plugins for metadata or dependency checks
+    # Shortcuts (populated after manager loads) will be added later in process
     if hasattr(manager, 'load_from_config'):
         manager.load_from_config(cfg, context)
     else:
         names = [k for k, v in cfg.items() if isinstance(v, dict) and v.get('enabled')]
         manager.load_all(names, context)
+    # After load, expose bus API via context if available
     return manager
 
 # ----------------------------------------------------------------------------

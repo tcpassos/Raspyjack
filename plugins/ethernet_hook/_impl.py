@@ -64,8 +64,6 @@ def _get_ipv4(interface: str) -> str | None:
 
 
 class EthernetHookPlugin(Plugin):
-    name = "EthernetHook"
-    priority = 160
 
     def __init__(self):
         self.ctx: Dict[str, Any] | None = None
@@ -76,42 +74,6 @@ class EthernetHookPlugin(Plugin):
         self._pending_thread: threading.Thread | None = None
         self._fa_font = None  # lazy-loaded Font Awesome font
 
-    # ------------------------------------------------------------------
-    # Configuration schema
-    # ------------------------------------------------------------------
-    def get_config_schema(self) -> dict:
-        return {
-            "interface": {
-                "type": "string",
-                "label": "Ethernet Interface",
-                "description": "Interface name to monitor (edit JSON to change)",
-                "default": "eth0"
-            },
-            "show_status_icon": {
-                "type": "boolean",
-                "label": "Show Ethernet Icon",
-                "description": "Display icon when Ethernet has IP",
-                "default": True
-            },
-            "icon_horizontal_pos": {
-                "type": "number",
-                "label": "Icon Horizontal Pos",
-                "description": "Horizontal x coordinate (pixels) for Ethernet icon (0 = left)",
-                "default": 30
-            },
-            "on_ethernet_connected": {
-                "type": "list",
-                "label": "Payloads On Connect",
-                "description": "List of payload names to run when interface gains IPv4 (edit JSON)",
-                "default": []
-            },
-            "on_ethernet_disconnected": {
-                "type": "list",
-                "label": "Payloads On Disconnect",
-                "description": "List of payload names to run when interface loses IPv4 (edit JSON)",
-                "default": []
-            },
-        }
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -163,32 +125,29 @@ class EthernetHookPlugin(Plugin):
             # State changed
             if prev is None and self._current_ip is not None:
                 # Connected event
-                self._fire_hooks('on_ethernet_connected', self._current_ip)
+                self._fire_hooks('ethernet.connected', self._current_ip)
             elif prev is not None and self._current_ip is None:
                 # Disconnected event
-                self._fire_hooks('on_ethernet_disconnected', prev)
+                self._fire_hooks('ethernet.disconnected', prev)
             self._last_ip = self._current_ip
 
     # ------------------------------------------------------------------
     # Hook firing
     # ------------------------------------------------------------------
-    def _fire_hooks(self, hook_key: str, ip: str | None):
-        payloads = self._get_payload_list(hook_key)
-        # Always emit the event (state transition) regardless of payload execution viability.
-        # This guarantees other plugins depending on ethernet.connected / ethernet.disconnected
-        # are not starved if a previous payload execution is still running.
-        self._emit_event_for_hook(hook_key, ip)
+    def _fire_hooks(self, event_key: str, ip: str | None):
+        payloads = self._get_payload_list(event_key)
+        self.emit(event_key, interface=self._get_interface_name(), ip=ip)
 
         if not payloads:
             return
 
         if self._pending_thread and self._pending_thread.is_alive():
             # Skip launching another payload batch while one is active.
-            print(f"[EthernetHook] Payload runner busy; skipping payloads for {hook_key}")
+            print(f"[EthernetHook] Payload runner busy; skipping payloads for {event_key}")
             return
 
         def runner():
-            print(f"[EthernetHook] Executing {hook_key} payloads ({len(payloads)}) ip={ip or 'None'}")
+            print(f"[EthernetHook] Executing {event_key} payloads ({len(payloads)}) ip={ip or 'None'}")
             for p in payloads:
                 try:
                     exec_payload = self.ctx.get('exec_payload') if self.ctx else None
@@ -198,21 +157,10 @@ class EthernetHookPlugin(Plugin):
                         print(f"[EthernetHook] exec_payload helper not available for '{p}'")
                 except Exception as e:
                     print(f"[EthernetHook] Payload '{p}' failed: {e}")
-            print(f"[EthernetHook] Done {hook_key}")
+            print(f"[EthernetHook] Done {event_key}")
 
         self._pending_thread = threading.Thread(target=runner, daemon=True)
         self._pending_thread.start()
-
-    def _emit_event_for_hook(self, hook_key: str, ip: str | None) -> None:
-        if not self.ctx:
-            return
-        mgr = self.ctx.get('plugin_manager')
-        if not mgr or not hasattr(mgr, 'emit_event'):
-            return
-        if hook_key == 'on_ethernet_connected':
-            mgr.emit_event('ethernet.connected', interface=self._get_interface_name(), ip=ip)
-        elif hook_key == 'on_ethernet_disconnected':
-            mgr.emit_event('ethernet.disconnected', interface=self._get_interface_name(), ip=ip)
 
     # ------------------------------------------------------------------
     # Overlay icon

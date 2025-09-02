@@ -1,0 +1,15 @@
+{
+  "name": "Screenshot",
+  "version": "0.1.0",
+  "author": "tcpassos",
+  "description": "Capture framebuffer to PNG on LONG_PRESS KEY2_PIN",
+  "priority": 120,
+  "requires": [],
+  "permissions": {
+    "filesystem": true
+  },
+  "events": {
+    "emits": ["screenshot.captured"],
+    "listens": ["button.LONG_PRESS"]
+  }
+}

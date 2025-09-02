@@ -18,23 +18,28 @@ example_plugin/
 ## Quick Start
 1. Duplicate this folder and rename it, e.g. `my_new_plugin`.
 2. Edit `_impl.py`: rename `ExamplePlugin` and adjust `name` + `priority`.
-3. Adjust `get_config_schema()` to declare your configuration options.
+3. Create/modify `plugin.json` manifest: add `config_schema` with your options + `priority`.
 4. Implement any lifecycle hooks you need.
 5. Start RaspyJack; the new plugin will be auto‑detected and added to `plugins_conf.json` (disabled by default).
 6. Enable it via: Menu > Plugins > your_plugin > Enable Plugin, then Save & Restart.
 
-## Configuration Schema
-Return a dictionary describing each option:
-```python
-def get_config_schema(self) -> dict:
-    return {
-        "show_counter": {
-            "type": "boolean",
-            "label": "Show Counter HUD",
-            "description": "Display a simple incrementing counter on screen",
-            "default": True,
-        }
+## Configuration Schema (Manifest)
+Declare configuration options inside `plugin.json` under `config_schema`.
+Example `plugin.json` fragment:
+```json
+{
+  "name": "Example Plugin",
+  "version": "1.0.0",
+  "priority": 150,
+  "config_schema": {
+    "show_counter": {
+      "type": "boolean",
+      "label": "Show Counter HUD",
+      "description": "Display a simple incrementing counter on screen",
+      "default": true
     }
+  }
+}
 ```
 The auto‑discovery process writes schema defaults into `plugins_conf.json` like:
 ```json
@@ -53,6 +58,7 @@ You can safely hand‑edit `priority` and `enabled`. Options should usually be t
 | `on_unload()` | Clean up resources, close files, stop threads. |
 | `on_tick(dt)` | Periodic lightweight updates. Avoid blocking. |
 | `on_button_event(event)` | React to high-level button events (PRESS, LONG_PRESS, CLICK, etc.). |
+| `emit()/on()/once()/off()` | Event bus helpers for publish/subscribe (see Event Bus section). |
 | `on_render_overlay(image, draw)` | Draw small overlay elements (text/icon). Do not clear whole screen. |
 | `on_before_exec_payload(name)` | Called before a payload is executed. |
 | `on_after_exec_payload(name, success)` | After payload completion. |
@@ -74,6 +80,18 @@ This lets payloads call them uniformly, e.g. `./bin/EXAMPLE_CMD`.
 - Avoid global imports for heavy libs inside hooks; import lazily
 - Use `on_config_changed` to recompute derived state
 - Consider adding a `get_info()` for user diagnostics
+
+## Event Bus Usage (Quick)
+Within your plugin methods you can:
+```python
+def on_load(self, ctx):
+  self.on('ethernet.connected', self._eth_up)
+  self.emit('example.ready', at=time.time())
+
+def _eth_up(self, evt, data):
+  print('Ethernet is up:', data)
+```
+Wildcard patterns supported: `self.on('ethernet.*', handler)`.
 
 ## Troubleshooting
 - Plugin not showing? Ensure folder has `__init__.py` and a `plugin` instance

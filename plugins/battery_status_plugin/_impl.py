@@ -65,40 +65,14 @@ class _INA219:
         return value * self._power_lsb
 
 class BatteryStatusPlugin(Plugin):
-    name = "BatteryStatus"
-    priority = 40
-
-    def get_config_schema(self) -> dict:
-        """Return configuration schema for Battery Status plugin."""
-        return {
-            "show_percentage": {
-                "type": "boolean",
-                "label": "Show Battery Percentage",
-                "description": "Display battery percentage text in overlay",
-                "default": True
-            },
-            "show_icon": {
-                "type": "boolean",
-                "label": "Show Battery Icon",
-                "description": "Display battery icon graphic in overlay", 
-                "default": True
-            },
-            "enable_monitoring": {
-                "type": "boolean",
-                "label": "Enable Battery Monitoring",
-                "description": "Enable battery status monitoring and overlay display",
-                "default": True
-            }
-        }
 
     def on_load(self, ctx: dict) -> None:
         self.ctx = ctx
-        opts = getattr(self, 'options', {}) or {}
-        self.addr = int(opts.get('address', 0x43))
-        self.bus_num = int(opts.get('i2c_bus', 1))
-        self.refresh_interval = float(opts.get('refresh_interval', 2.0))
-        self.v_min = float(opts.get('voltage_min', 3.0))
-        self.v_max = float(opts.get('voltage_max', 4.2))
+        self.addr = int(self.get_config_value("address", 0x43))
+        self.bus_num = int(self.get_config_value("i2c_bus", 1))
+        self.refresh_interval = float(self.get_config_value("refresh_interval", 2.0))
+        self.v_min = float(self.get_config_value("voltage_min", 3.0))
+        self.v_max = float(self.get_config_value("voltage_max", 4.2))
         self._last_poll = 0.0
         self.percent = None
         self.ok = False

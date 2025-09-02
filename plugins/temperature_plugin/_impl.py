@@ -3,25 +3,6 @@ import time
 from plugins.base import Plugin
 
 class TemperaturePlugin(Plugin):
-    name = "Temperature"
-    priority = 30
-
-    def get_config_schema(self) -> dict:
-        """Return configuration schema for Temperature plugin."""
-        return {
-            "enable_display": {
-                "type": "boolean",
-                "label": "Show Temperature HUD",
-                "description": "Display temperature in corner of screen",
-                "default": True
-            },
-            "show_unit": {
-                "type": "boolean",
-                "label": "Show Temperature Unit",
-                "description": "Display °C unit with temperature value",
-                "default": True
-            }
-        }
 
     def on_load(self, ctx: dict) -> None:
         self.ctx = ctx
