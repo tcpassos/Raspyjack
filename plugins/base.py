@@ -254,14 +254,16 @@ class _LoadedPlugin:
 class PluginManager:
     """Loads and dispatches events to registered plugins."""
 
-    def __init__(self, verbose: bool = True):
+    def __init__(self, verbose: bool = True, event_bus=None):
         self._loaded: List[_LoadedPlugin] = []
         self._last_tick: float = time.time()
         self._ctx: dict = {}
         self.verbose = verbose
-        # Event bus (wildcard capable) provided separately
-        from .event_bus import EventBus
-        self._event_bus = EventBus()
+        # Event bus (wildcard capable) can be injected
+        if event_bus is None:
+            from .event_bus import EventBus
+            event_bus = EventBus()
+        self._event_bus = event_bus
         # Internal synchronization
         import threading
         self._lock = threading.RLock()
@@ -523,31 +525,6 @@ class PluginManager:
         """Return last built overlay (do not mutate)."""
         return self._overlay_image
 
-    def before_exec_payload(self, payload_name: str) -> None:
-        # Emit event for payload about to execute
-        try:
-            self.emit_event("payload.before_exec", payload_name=payload_name)
-        except Exception:
-            self._log("[PLUGIN] event emit error (payload.before_exec)")
-
-    def after_exec_payload(self, payload_name: str, success: bool) -> None:
-        try:
-            self.emit_event("payload.after_exec", payload_name=payload_name, success=success)
-        except Exception:
-            self._log("[PLUGIN] event emit error (payload.after_exec)")
-
-    def before_scan(self, label: str, args: list[str]) -> None:
-        try:
-            self.emit_event("scan.before", label=label, args=args)
-        except Exception:
-            self._log("[PLUGIN] event emit error (scan.before)")
-
-    def after_scan(self, label: str, args: list[str], result_path: str) -> None:
-        try:
-            self.emit_event("scan.after", label=label, args=args, result_path=result_path)
-        except Exception:
-            self._log("[PLUGIN] event emit error (scan.after)")
-
     def get_plugin_info(self, name: str) -> str:
         """Get info string from a specific plugin by name."""
         for lp in self._loaded:
@@ -642,6 +619,9 @@ class PluginManager:
                 self._event_bus.unsubscribe_pattern(pattern)
             except Exception:
                 self._log("[PLUGIN] event bus unsubscribe_pattern error")
+
+    def get_event_bus(self):
+        return self._event_bus
 
     # ------------------------------------------------------------------
     # Helper utilities

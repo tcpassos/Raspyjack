@@ -263,7 +263,7 @@ def restart_ui():
 def safe_kill(*names):
     for name in names:
         subprocess.run(
-            ["pkill", "-9", "-x", name],      # -x = nom exact
+            ["pkill", "-9", "-x", name],      # -x = exact name match
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -336,7 +336,6 @@ from plugins.runtime import (
     load_plugins_conf as _rt_load_plugins_conf,
     save_plugins_conf as _rt_save_plugins_conf,
     reload_plugins as _rt_reload_plugins,
-    plugin_tick_loop as _rt_plugin_tick_loop,
     install_pending_plugin_archives as _rt_install_archives,
 )
 
@@ -529,9 +528,9 @@ def show_info():
 WAIT_TXT = "Scan in progress..."
 
 def run_scan(label: str, nmap_args: list[str]):
-    if '_plugin_manager' in globals() and _plugin_manager is not None:
+    if _event_bus is not None:
         try:
-            _plugin_manager.before_scan(label, nmap_args)
+            _event_bus.emit("scan.before", label=label, args=nmap_args)
         except Exception:
             pass
 
@@ -561,9 +560,9 @@ def run_scan(label: str, nmap_args: list[str]):
     subprocess.run(cmd)
     subprocess.run(["sed", "-i", "s/Nmap scan report for //g", path])
 
-    if '_plugin_manager' in globals() and _plugin_manager is not None:
+    if _event_bus is not None:
         try:
-            _plugin_manager.after_scan(label, nmap_args, path)
+            _event_bus.emit("scan.after", label=label, args=nmap_args, result_path=path)
         except Exception:
             pass
 
@@ -1039,8 +1038,11 @@ def exec_payload(filename: str) -> None:
         command = [sys.executable, "-u", os.path.join(base, "payload_executor.py"), full_path]
 
     print(f"[PAYLOAD] ► Starting: {run_label}")
-    if '_plugin_manager' in globals() and _plugin_manager is not None:
-        _plugin_manager.before_exec_payload(run_label)
+    if _event_bus is not None:
+        try:
+            _event_bus.emit("payload.before_exec", payload_name=run_label)
+        except Exception:
+            pass
 
     screen_lock.set()
     LCD.LCD_Clear()
@@ -1066,8 +1068,11 @@ def exec_payload(filename: str) -> None:
     while any(GPIO.input(p) == 0 for p in gpio_config.pins.values()) and time.time() - t0 < .3:
         time.sleep(.03)
     screen_lock.clear()
-    if '_plugin_manager' in globals() and _plugin_manager is not None:
-        _plugin_manager.after_exec_payload(run_label, True)
+    if _event_bus is not None:
+        try:
+            _event_bus.emit("payload.after_exec", payload_name=run_label, success=True)
+        except Exception:
+            pass
     print("[PAYLOAD] ✔ Menu ready.")
 
 # ============================================================================
@@ -1435,7 +1440,16 @@ def main():
             restart_ui()
 
 ### Plugin system bootstrap ###
+_event_bus = None
 _plugin_manager = None
+
+# Initialize central EventBus early so other subsystems can attach even if PluginManager is missing
+try:
+    from plugins.event_bus import EventBus as _CentralBus
+    _event_bus = _CentralBus()
+except Exception as _eb_exc:
+    print(f"[EVENT_BUS] Init failed: {_eb_exc}")
+
 if 'PluginManager' in globals() and PluginManager is not None:
     try:
         plugins_cfg_path = os.path.join(default.install_path, 'plugins', 'plugins_conf.json')
@@ -1446,6 +1460,8 @@ if 'PluginManager' in globals() and PluginManager is not None:
         installed = _rt_install_archives(default.install_path)
         if installed:
             print(f"[PLUGIN] Installed new plugins from archives: {', '.join(installed)}")
+        if _plugin_manager is None:
+            _plugin_manager = PluginManager(event_bus=_event_bus)
         reload_plugins()
     except Exception as e:
         print(f"[PLUGIN] Error during plugin bootstrap: {e}")

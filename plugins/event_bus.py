@@ -18,7 +18,9 @@ Errors in handlers are caught and logged (print) so they do not break emit chain
 from __future__ import annotations
 import fnmatch
 import threading
-from typing import Callable, List, Tuple
+import time
+from collections import deque
+from typing import Callable, List, Tuple, Deque, Dict, Any
 
 Handler = Callable[[str, dict], None]
 
@@ -27,6 +29,8 @@ class EventBus:
         self._lock = threading.RLock()
         # list of tuples (pattern, handler, once)
         self._subs: List[Tuple[str, Handler, bool]] = []
+        # Keep a bounded history of recent emitted events for diagnostics
+        self._history: Deque[Dict[str, Any]] = deque(maxlen=200)
 
     # ------------------------------------------------------------------
     def subscribe(self, pattern: str, handler: Handler, *, once: bool = False) -> None:
@@ -49,6 +53,16 @@ class EventBus:
         # Snapshot first for minimal lock time
         with self._lock:
             matches = [(idx, s) for idx, s in enumerate(self._subs) if fnmatch.fnmatch(topic, s[0])]
+            # Record history entry (store shallow data summary to keep size small)
+            try:
+                self._history.append({
+                    'ts': time.time(),
+                    'topic': topic,
+                    'keys': list(data.keys()),
+                    'match_count': len(matches)
+                })
+            except Exception:
+                pass
         # Call outside lock to avoid deadlocks / reentrancy problems
         to_remove_indices: List[int] = []
         for idx, (pattern, handler, once) in matches:
@@ -69,5 +83,17 @@ class EventBus:
     def clear(self) -> None:
         with self._lock:
             self._subs.clear()
+            self._history.clear()
+
+    # Introspection helpers --------------------------------------
+    def list_subscriptions(self) -> List[Tuple[str, bool]]:
+        """Return list of (pattern, once_flag) for current subscriptions."""
+        with self._lock:
+            return [(p, once) for (p, _h, once) in self._subs]
+
+    def get_history(self) -> List[Dict[str, Any]]:
+        """Return a snapshot list of recent emit history entries (most recent last)."""
+        with self._lock:
+            return list(self._history)
 
 __all__ = ["EventBus"]
