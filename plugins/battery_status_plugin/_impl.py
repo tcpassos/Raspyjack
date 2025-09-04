@@ -89,6 +89,8 @@ class BatteryStatusPlugin(Plugin):
         self._stable_high_cycles = 0  # used for adaptive polling
         self._blink_phase = False     # for critical blink
         self.ok = False
+        # Charging state tracking: None (unknown), 'charging', 'discharging'
+        self._charge_state = None
 
         # Sensor init
         try:
@@ -232,6 +234,11 @@ class BatteryStatusPlugin(Plugin):
         self._last_poll = now
         try:
             v = self.sensor.bus_voltage()
+            # Determine instantaneous charging/discharging from current reading (>= ~5mA threshold)
+            try:
+                cur_a = self.sensor.current_a()
+            except Exception:
+                cur_a = 0.0
             raw_pct = self._voltage_to_percent(v)
             # Exponential smoothing
             if self.percent is None:
@@ -251,6 +258,22 @@ class BatteryStatusPlugin(Plugin):
                 rounded = int(self.percent)
                 emit_change = (self.last_emit_percent is None or abs(rounded - self.last_emit_percent) >= 1)
                 if emit_change:
+                    # Determine charge state transition before updating last_emit_percent
+                    new_state = None
+                    # Positive current -> charging; negative (or zero) -> discharging
+                    if cur_a > 0.005:  # 5 mA threshold to avoid noise
+                        new_state = 'charging'
+                    else:
+                        new_state = 'discharging'
+                    if new_state != self._charge_state and new_state is not None:
+                        # Emit transition event
+                        if new_state == 'charging':
+                            print(f"[BatteryStatus] Charging started at {rounded}% ({v:.3f}V, {cur_a:.3f}A)")
+                            self.emit('battery.charging', percent=rounded, voltage=v, current=cur_a)
+                        else:
+                            print(f"[BatteryStatus] Discharging started at {rounded}% ({v:.3f}V, {cur_a:.3f}A)")
+                            self.emit('battery.discharging', percent=rounded, voltage=v, current=cur_a)
+                        self._charge_state = new_state
                     self.emit("battery.updated", percent=rounded, voltage=v, ts=now,
                               errors=self.read_errors, samples=self.samples_ok)
                     # Threshold events

@@ -14,7 +14,9 @@
       "battery.low",
       "battery.critical",
       "battery.recovered",
-      "battery.sensor_error"
+      "battery.sensor_error",
+      "battery.charging",
+      "battery.discharging"
     ],
     "listens": []
   },
