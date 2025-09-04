@@ -10,10 +10,23 @@
     "filesystem": true
   },
   "events": {
-    "emits": ["discord.message.sent", "discord.scan.notified"],
-    "listens": ["scan.completed"]
+    "emits": [
+      "discord.message.sent",
+      "discord.message.failed",
+      "discord.webhook.configured",
+      "discord.webhook.updated"
+    ],
+    "listens": ["scan.after"]
   },
+  "payload_extensions": ["DISCORD_EXFIL", "DISCORD_MESSAGE"],
   "config_schema": {
+    "webhook_url": {
+      "type": "string",
+      "label": "Discord Webhook URL",
+      "description": "Discord webhook URL for sending notifications",
+      "default": "",
+      "sensitive": true
+    },
     "nmap_notifications": {
       "type": "boolean",
       "label": "Nmap Notifications",

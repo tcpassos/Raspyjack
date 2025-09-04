@@ -15,11 +15,11 @@ on the status overlay when connected.
 ```jsonc
 {
   "ethernet_hook": {
-    "enabled": false,            // Enable via UI after first discovery
+    "enabled": false,                   // Enable via UI after first discovery
     "priority": 160,
     "options": {
-      "interface": "eth0",      // (string) Interface to monitor
-      "show_status_icon": true,  // (boolean) Show icon in overlay
+      "interface": "eth0",              // (string) Interface to monitor
+      "show_status_icon": true,         // (boolean) Show icon in overlay
       "on_ethernet_connected": [],      // (list[str]) Payload names executed on connect
       "on_ethernet_disconnected": []    // (list[str]) Payload names executed on disconnect
     }
@@ -56,12 +56,6 @@ A small jack-shaped outline + link square is drawn near the top-right when:
 - Uses `ip -4 addr show <iface>` to detect IPv4
 - Debounces events: only fires when state actually changes
 - Skips triggering if a previous hook thread is still running
-
-## Roadmap Ideas
-- Queue subsequent events instead of skipping if thread busy
-- Optional cooldown between runs
-- UI editors for string/list types
-- Per-payload timeout control
 
 ---
 Log prefix: `[EthernetHook]`
