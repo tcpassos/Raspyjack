@@ -32,6 +32,23 @@
       "label": "Nmap Notifications",
       "description": "Send Discord notifications when Nmap scans complete",
       "default": true
+    },
+    "event_hooks": {
+      "type": "list",
+      "label": "Event Hooks",
+      "description": "List of event hook rules (trigger + message/embed/files templates)",
+      "default": [],
+      "item_schema": {
+        "type": "object",
+        "fields": {
+          "id": { "type": "string", "description": "Optional unique identifier for the hook" },
+          "event": { "type": "string", "required": true, "description": "Event pattern to match (supports *)" },
+          "message": { "type": "string", "description": "Plain message content template (ignored if embed present)" },
+          "embed": { "type": "object", "description": "Discord embed object with templated string fields" },
+          "files": { "type": "list", "description": "List of file path templates to attach" },
+          "enabled": { "type": "boolean", "default": true, "description": "Enable/disable this hook" }
+        }
+      }
     }
   }
 }

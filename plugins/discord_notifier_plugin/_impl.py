@@ -1,7 +1,5 @@
 from __future__ import annotations
 import os
-import json
-import requests
 import threading
 from datetime import datetime
 from plugins.base import Plugin
@@ -84,6 +82,8 @@ class DiscordNotifierPlugin(Plugin):
     def __init__(self):
         super().__init__()
         self._ctx = None
+        self._event_hook_rules = [] 
+        self._event_hook_handlers = []
     
     # -------------------------------------------------------------------------
     # PLUGIN LIFECYCLE
@@ -98,6 +98,8 @@ class DiscordNotifierPlugin(Plugin):
         
         # Subscribe to scan completion events
         self.on("scan.after", self._on_scan_after)
+        # Load event hook rules
+        self._reload_event_hooks()
     
     def on_config_changed(self, key: str, old_value, new_value) -> None:
         """React to configuration changes."""
@@ -115,6 +117,127 @@ class DiscordNotifierPlugin(Plugin):
                     pass
             else:
                 print(f"[DiscordNotifier] Invalid webhook URL - Discord notifications disabled")
+        elif key in ("event_hooks", "auto_messages"):
+            # Expect list of rule dicts (support legacy key auto_messages)
+            print("[DiscordNotifier] Reloading event hook rules")
+            self._reload_event_hooks()
+
+    # -------------------------------------------------------------------------
+    # EVENT HOOK RULES
+    # -------------------------------------------------------------------------
+
+    def _reload_event_hooks(self):
+        """Load and register event hook rules from configuration.
+
+        Hook format (list item in config):
+        {
+          "id": "scan_summary",            # optional unique id (string)
+          "event": "scan.after",           # required (supports wildcard *)
+          "message": "Scan {label} done",  # plain content OR
+          "embed": {                       # embed object (optional)
+             "title": "Scan {label}",
+             "description": "Targets: {args}",
+             "color": 65280
+          },
+          "files": ["{result_path}"],      # optional list of file paths (placeholders)
+          "enabled": true                  # optional, default true
+        }
+        Placeholders use python str.format with a SafeDict of event data.
+        """
+        # Unsubscribe previous handlers
+        for pattern, handler in self._event_hook_handlers:
+            try:
+                self.off(handler)
+            except Exception:
+                pass
+        self._event_hook_handlers.clear()
+        self._event_hook_rules.clear()
+
+        raw_rules = self.get_config_value("event_hooks", None)
+        raw_rules = raw_rules or []
+        if not isinstance(raw_rules, list):
+            return
+
+        normalized = []
+        for idx, r in enumerate(raw_rules):
+            if not isinstance(r, dict):
+                continue
+            event_pat = r.get("event") or r.get("topic")
+            if not event_pat or not isinstance(event_pat, str):
+                continue
+            enabled = r.get("enabled", True)
+            if not enabled:
+                continue
+            msg = r.get("message")
+            embed = r.get("embed") if isinstance(r.get("embed"), dict) else None
+            files = r.get("files") if isinstance(r.get("files"), list) else []
+            hook_id = r.get("id") if isinstance(r.get("id"), str) else None
+            rule = {
+                'event': event_pat,
+                'message': msg,
+                'embed': embed,
+                'files': files,
+                'index': idx,
+                'id': hook_id,
+            }
+            normalized.append(rule)
+        self._event_hook_rules = normalized
+
+        # Register handlers (one per unique pattern to reduce duplicates)
+        patterns = {}
+        for rule in normalized:
+            patterns.setdefault(rule['event'], []).append(rule)
+
+        for pattern, rules in patterns.items():
+            def make_handler(rules_list):
+                def _handler(event_name, data):
+                    self._process_event_hooks(event_name, data or {}, rules_list)
+                return _handler
+            h = make_handler(rules)
+            self.on(pattern, h)
+            self._event_hook_handlers.append((pattern, h))
+        if normalized:
+            print(f"[DiscordNotifier] Loaded {len(normalized)} event hook rule(s)")
+
+    def _process_event_hooks(self, event_name: str, data: dict, rules: list):
+        if not discord_utils.is_configured():
+            return
+        # Provide safe formatting context
+        ctx = _SafeDict(**data)
+        ctx['event'] = event_name
+        for rule in rules:
+            try:
+                files = []
+                for f in rule['files']:
+                    try:
+                        expanded = f.format_map(ctx)
+                        if os.path.exists(expanded) and os.path.getsize(expanded) > 0:
+                            files.append(expanded)
+                    except Exception:
+                        continue
+                embed_cfg = None
+                if rule['embed']:
+                    # Deep copy & format each string field recursively
+                    embed_cfg = _format_embed(rule['embed'], ctx)
+                elif rule['message']:
+                    # Simple content mode
+                    embed_cfg = { 'content': rule['message'].format_map(ctx) }
+                if not embed_cfg:
+                    continue
+                ok = discord_utils.send_embed_to_discord(embed_config=embed_cfg, files=files if files else None)
+                evt_payload = {
+                    'type': 'event_hook',
+                    'rule_index': rule['index'],
+                    'hook_id': rule.get('id'),
+                    'trigger_event': event_name,
+                    'success': ok,
+                    'files': files,
+                    'timestamp': datetime.now().isoformat()
+                }
+                self.emit('discord.message.sent' if ok else 'discord.message.failed', **evt_payload)
+            except Exception as e:
+                print(f"[DiscordNotifier] Event hook rule error: {e}")
+
     
     # -------------------------------------------------------------------------
     # WEBHOOK CONFIGURATION
@@ -254,6 +377,7 @@ class DiscordNotifierPlugin(Plugin):
             "Discord webhook configured",
             f"Webhook ID: {masked_id}",
             f"Status: {'Ready' if nmap_notifications else 'Notifications disabled'}",
+            f"Event hooks: {len(getattr(self, '_event_hook_rules', []))}",
             "",
             "Current Configuration:",
             f"• Nmap notifications: {'ON' if nmap_notifications else 'OFF'}",
@@ -409,3 +533,32 @@ class DiscordNotifierPlugin(Plugin):
 # =============================================================================
 
 plugin = DiscordNotifierPlugin()
+
+
+# -----------------------------------------------------------------------------
+# Helper utilities for safe formatting
+# -----------------------------------------------------------------------------
+
+class _SafeDict(dict):
+    def __missing__(self, key):
+        return '{' + key + '}'  # leave placeholder untouched if missing
+
+def _format_embed(embed: dict, ctx: dict):
+    """Recursively format an embed configuration dictionary with placeholders.
+
+    Only string values are formatted; other types are passed through.
+    """
+    if not isinstance(embed, dict):
+        return None
+    def recurse(obj):
+        if isinstance(obj, dict):
+            return {k: recurse(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [recurse(v) for v in obj]
+        if isinstance(obj, str):
+            try:
+                return obj.format_map(ctx)
+            except Exception:
+                return obj
+        return obj
+    return recurse(embed)

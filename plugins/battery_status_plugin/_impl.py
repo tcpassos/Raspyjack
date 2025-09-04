@@ -268,10 +268,8 @@ class BatteryStatusPlugin(Plugin):
                     if new_state != self._charge_state and new_state is not None:
                         # Emit transition event
                         if new_state == 'charging':
-                            print(f"[BatteryStatus] Charging started at {rounded}% ({v:.3f}V, {cur_a:.3f}A)")
                             self.emit('battery.charging', percent=rounded, voltage=v, current=cur_a)
                         else:
-                            print(f"[BatteryStatus] Discharging started at {rounded}% ({v:.3f}V, {cur_a:.3f}A)")
                             self.emit('battery.discharging', percent=rounded, voltage=v, current=cur_a)
                         self._charge_state = new_state
                     self.emit("battery.updated", percent=rounded, voltage=v, ts=now,

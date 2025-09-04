@@ -38,9 +38,76 @@ Discord Webhook integration for RaspyJack. Sends completion notifications for Nm
     "label": "Nmap Notifications",
     "description": "Send Discord notifications when Nmap scans complete",
     "default": true
+  },
+  "event_hooks": {
+    "type": "list",
+    "label": "Event Hooks",
+    "description": "List of event hook rules (trigger + message/embed/files templates)",
+    "default": []
   }
 }
 ```
+
+## Event Hooks (Dynamic Messages)
+Define custom Discord messages triggered by any internal event name (supports wildcards like `scan.*`). Each item in `event_hooks` is an object:
+
+```jsonc
+{
+  "id": "scan_summary",               // optional unique identifier (string)
+  "event": "scan.after",              // required event pattern (wildcards * allowed)
+  "message": "Scan {label} finished", // plain content (use either message OR embed)
+  "embed": {                          // optional rich embed (omit if using message)
+    "title": "Scan {label}",
+    "description": "Targets: {args}",
+    "color": 65280
+  },
+  "files": ["{result_path}"],         // optional list of file path templates
+  "enabled": true                     // optional (default true)
+}
+```
+
+Notes:
+- Use either `message` or `embed` (if both provided, `embed` wins).
+- `files` entries are formatted; only existing non‑empty files are attached.
+- Missing placeholders are left verbatim (thanks to safe formatting).
+- Legacy key `auto_messages` is still accepted for backward compatibility.
+
+### Item Schema (internal representation)
+The manifest defines an `item_schema` for validation-capable UIs:
+```jsonc
+{
+  "type": "object",
+  "fields": {
+    "id":      { "type": "string",  "description": "Optional unique identifier for the hook" },
+    "event":   { "type": "string",  "required": true, "description": "Event pattern (supports *)" },
+    "message": { "type": "string",  "description": "Plain message template (ignored if embed present)" },
+    "embed":   { "type": "object",  "description": "Discord embed object (templated)" },
+    "files":   { "type": "list",    "description": "List of file path templates" },
+    "enabled": { "type": "boolean", "default": true, "description": "Enable/disable this hook" }
+  }
+}
+```
+
+### Placeholders
+Any field from the emitted event data is available as `{key}`. Additionally:
+- `{event}`: the event name that triggered the hook.
+
+Example event data triggering a hook:
+```python
+emit('scan.after', label='Quick TCP', result_path='/root/Raspyjack/loot/Nmap/result.txt', args='-sS -Pn')
+```
+Placeholders `{label}`, `{result_path}`, `{args}` become available.
+
+### Emitted Metadata for Hooks
+Hook dispatch success/failure produces `discord.message.sent` or `discord.message.failed` with:
+- `type`: always `event_hook`
+- `rule_index`: position in the list
+- `hook_id`: provided `id` (if any)
+- `trigger_event`: triggering event name
+- `files`: list of attached files
+- `timestamp`: ISO-8601 string
+
+Use this to correlate or filter in downstream automation.
 
 ## Emitted Events
 These events are published on the event bus (wildcards supported):
@@ -56,6 +123,7 @@ These events are published on the event bus (wildcards supported):
 - `scan_notification`
 - `loot_file`
 - `loot_archive`
+- `event_hook`
 
 ### Common `discord.message.failed` reasons
 - `size_limit`: file/ZIP exceeds `DISCORD_ATTACHMENT_LIMIT` (8 MiB default)
