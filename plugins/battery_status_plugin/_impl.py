@@ -65,9 +65,14 @@ class _INA219:
         return value * self._power_lsb
 
 class BatteryStatusPlugin(Plugin):
+
+    # ------------------------------------------------------------------
+    # Life-cycle
+    # ------------------------------------------------------------------
     def on_load(self, ctx: dict) -> None:
         """Initialize battery monitoring state and attempt sensor setup."""
         self.ctx = ctx
+
         # Configuration (manifest-driven with defaults)
         self.addr = int(self.get_config_value("address", 67))  # decimal (0x43)
         self.bus_num = int(self.get_config_value("i2c_bus", 1))
@@ -82,15 +87,14 @@ class BatteryStatusPlugin(Plugin):
 
         # State
         self._last_poll = 0.0
-        self.percent = None  # type: float | None
-        self.last_emit_percent = None  # type: int | None
+        self.percent = None              # type: float | None
+        self.last_emit_percent = None    # type: int | None
         self.read_errors = 0
         self.samples_ok = 0
-        self._stable_high_cycles = 0  # used for adaptive polling
-        self._blink_phase = False     # for critical blink
+        self._stable_high_cycles = 0     # used for adaptive polling
+        self._blink_phase = False        # for critical blink
         self.ok = False
-        # Charging state tracking: None (unknown), 'charging', 'discharging'
-        self._charge_state = None
+        self._charge_state = None        # None (unknown), 'charging', 'discharging'
 
         # Sensor init
         try:
@@ -100,12 +104,16 @@ class BatteryStatusPlugin(Plugin):
             print(f"[BatteryStatus] Disabled (I2C init failed): {e}")
             self.sensor = None
             self.emit("battery.sensor_error", error=str(e))
+
         # Build voltage table now that v_min is known
         try:
             self._voltage_table = self._build_voltage_table()
         except Exception:
             self._voltage_table = []
 
+    # ------------------------------------------------------------------
+    # Voltage / percentage table & conversion
+    # ------------------------------------------------------------------
     def _build_voltage_table(self) -> list[tuple[float, int]]:
         """Build a voltage->percent table dynamically using configured v_min.
         Strategy:
@@ -206,6 +214,9 @@ class BatteryStatusPlugin(Plugin):
                 return p_lo + ratio * (p_hi - p_lo)
         return 0.0
 
+    # ------------------------------------------------------------------
+    # Polling / adaptive interval
+    # ------------------------------------------------------------------
     def _effective_interval(self) -> float:
         """Compute adaptive polling interval.
 
@@ -224,6 +235,9 @@ class BatteryStatusPlugin(Plugin):
             return max(1.0, self.base_refresh_interval * 0.75)
         return self.base_refresh_interval
 
+    # ------------------------------------------------------------------
+    # Runtime polling & event emission
+    # ------------------------------------------------------------------
     def on_tick(self, dt: float) -> None:
         if not self.ok or self.sensor is None or not self.get_config_value("enable_monitoring", True):
             return
@@ -292,6 +306,9 @@ class BatteryStatusPlugin(Plugin):
             if self.read_errors in (1, 10):
                 self.emit("battery.sensor_error", error=str(e), ts=now, count=self.read_errors)
 
+    # ------------------------------------------------------------------
+    # Overlay rendering
+    # ------------------------------------------------------------------
     def on_render_overlay(self, image, draw) -> None:
         if (self.percent is None or 
             not self.get_config_value("enable_monitoring", True) or 
@@ -375,6 +392,9 @@ class BatteryStatusPlugin(Plugin):
             if show_pct and self.align != 'left':
                 draw.text((cur_x, y1), pct_text, fill=text_color)
 
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
     def on_unload(self) -> None:
         """Attempt to close I2C bus cleanly."""
         try:
@@ -383,6 +403,9 @@ class BatteryStatusPlugin(Plugin):
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Configuration updates
+    # ------------------------------------------------------------------
     def on_config_changed(self, key: str, old_value, new_value) -> None:
         """React to configuration changes."""
         try:
@@ -450,7 +473,69 @@ class BatteryStatusPlugin(Plugin):
                     pass
         except Exception as e:
             print(f"[{self.name}] on_config_changed error for {key}: {e}")
-    
+
+    # ------------------------------------------------------------------
+    # Menu helpers
+    # ------------------------------------------------------------------
+    def _menu_cycle_alignment(self):
+        wctx = self.ctx.get('widget_context') if getattr(self, 'ctx', None) else None
+        order = ['left', 'center', 'right']
+        current = getattr(self, 'align', 'right')
+        try:
+            idx = (order.index(current) + 1) % len(order)
+        except ValueError:
+            idx = 0
+        new_align = order[idx]
+        self.align = new_align
+        try:
+            self.persist_option('battery_align', new_align)
+        except Exception:
+            pass
+        if wctx:
+            try:
+                from ui.widgets import dialog_info as _dlg
+                _dlg(wctx, f"Align: {new_align}", wait=True, center=True)
+            except Exception:
+                pass
+        print(f"[{self.name}] alignment -> {new_align}")
+
+    def _menu_set_offset(self):
+        wctx = self.ctx.get('widget_context') if getattr(self, 'ctx', None) else None
+        if not wctx:
+            return
+        try:
+            from ui.widgets import numeric_picker, dialog_info
+        except Exception:
+            print(f"[{self.name}] numeric_picker unavailable")
+            return
+        current = int(getattr(self, 'offset', 0)) if hasattr(self, 'offset') else 0
+        new_val = numeric_picker(wctx, label="OFF", min_value=-128, max_value=128, initial_value=current, step=1)
+        if new_val == current:
+            try:
+                dialog_info(wctx, f"Offset unchanged\n{new_val}", wait=True, center=True)
+            except Exception:
+                pass
+            return
+        self.offset = new_val
+        try:
+            self.persist_option('battery_offset', int(new_val))
+        except Exception:
+            pass
+        try:
+            dialog_info(wctx, f"Offset set\n{new_val}", wait=True, center=True)
+        except Exception:
+            pass
+        print(f"[{self.name}] offset -> {new_val}")
+
+    def provide_menu_items(self):
+        items = []
+        items.append(("Battery Align", self._menu_cycle_alignment, "\uf037", 'Cycle overlay alignment'))
+        items.append(("Battery Offset", self._menu_set_offset, "\uf07d", 'Set horizontal pixel offset'))
+        return items
+
+    # ------------------------------------------------------------------
+    # Info reporting
+    # ------------------------------------------------------------------
     def get_info(self) -> str:
         if not self.ok or self.sensor is None:
             info_lines = [
