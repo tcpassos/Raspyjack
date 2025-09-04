@@ -3,19 +3,20 @@
 Modular plugin system for RaspyJack that allows adding functionality without modifying the main code.
 
 ## 📋 Table of Contents
-- [Installation](#-installation)
 - [Plugin Structure](#-plugin-structure)
+- [Installation](#-installation)
 - [Plugin Template](#-plugin-template)
 - [Configuration](#-configuration)
+- [Event Bus](#-event-bus)
+- [Plugin Dependencies](#-plugin-dependencies)
+- [Plugin Menu Actions](#-plugin-menu-actions)
+- [Persisting Configuration Changes](#-persisting-configuration-changes)
 - [Available Callbacks](#-available-callbacks)
 - [Context Helpers](#-context-helpers)
 - [Bin Commands](#-bin-commands)
 - [Complete Examples](#-complete-examples)
 - [Development](#-development)
-- [Event Bus](#-event-bus)
-- [Plugin Dependencies](#-plugin-dependencies)
-- [Plugin Menu Actions](#-plugin-menu-actions)
- - [Persisting Configuration Changes](#-persisting-configuration-changes)
+- [Included Plugins](#-included-plugins)
 
 ---
 
@@ -415,8 +416,6 @@ self.persist_option('icon_horizontal_pos', new_val)         # persist to disk
 If you need to update multiple keys atomically, consider reading the current
 config via runtime helpers and writing back once. A future helper may provide
 batch persistence if needed.
-
----
 
 ---
 
