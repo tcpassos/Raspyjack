@@ -9,7 +9,27 @@
     "filesystem": true
   },
   "events": {
-    "emits": ["screenshot.captured"],
-    "listens": ["button.LONG_PRESS"]
+      "emits": [
+        "screenshot.capture.start",
+        "screenshot.captured",
+        "screenshot.capture.failed",
+        "screenshot.directory.ready",
+        "screenshot.directory.error"
+      ],
+      "listens": []
+  },
+  "config_schema": {
+    "periodic_enabled": {
+      "type": "boolean",
+      "label": "Periodic Screenshots",
+      "description": "Enable automatic periodic screenshot capture",
+      "default": false
+    },
+    "periodic_interval": {
+      "type": "number",
+      "label": "Periodic Interval (s)",
+      "description": "Seconds between automatic captures (min 5)",
+      "default": 60
+    }
   }
 }
