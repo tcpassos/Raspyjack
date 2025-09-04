@@ -176,7 +176,7 @@ class Dialog(BaseWidget):
             # Wait for a button PRESS-like event before closing (any button)
             while True:
                 evt = self.ctx.get_button_event(timeout=0.5)
-                if evt and evt.get('type') in ('PRESS','CLICK','DOUBLE_CLICK'):
+                if evt and evt.get('type') == 'PRESS':
                     break
             clear_button_events()
 
@@ -288,7 +288,7 @@ class YesNoDialog(BaseWidget):
 
             # Event-driven input
             evt = self.ctx.get_button_event(timeout=0.5)
-            if not evt or evt.get('type') not in ('PRESS','CLICK','DOUBLE_CLICK'):
+            if not evt or evt.get('type') != 'PRESS':
                 time.sleep(0.05)
                 continue
             button = evt.get('button')
@@ -362,7 +362,7 @@ class ScrollableTextLines(BaseWidget):
                 continue
             etype = evt.get('type')
             btn = evt.get('button')
-            if etype not in ('PRESS', 'REPEAT', 'LONG_PRESS'):
+            if etype not in ('PRESS', 'REPEAT'):
                 continue
             if btn == 'KEY_DOWN_PIN':
                 index = (index + 1) % total
@@ -435,7 +435,7 @@ class ScrollableText(BaseWidget):
                 continue
             etype = evt.get('type')
             btn = evt.get('button')
-            if etype not in ('PRESS', 'REPEAT', 'LONG_PRESS'):
+            if etype not in ('PRESS', 'REPEAT'):
                 continue
             if btn == 'KEY_DOWN_PIN' and top_index < total - WINDOW:
                 top_index += 1
@@ -471,9 +471,8 @@ class IpValuePicker(ValuePickerWidget):
 
             self.update_display()
 
-            # Event-driven
             evt = self.ctx.get_button_event(timeout=0.5)
-            if not evt or evt.get('type') not in ('PRESS','REPEAT','CLICK','DOUBLE_CLICK'):
+            if not evt or evt.get('type') not in ('PRESS','REPEAT'):
                 continue
             button = evt.get('button')
             if button == "KEY_UP_PIN":
@@ -530,7 +529,7 @@ class ColorPicker(ValuePickerWidget):
             self.update_display()
 
             evt = self.ctx.get_button_event(timeout=0.5)
-            if not evt or evt.get('type') not in ('PRESS','REPEAT','CLICK','DOUBLE_CLICK'):
+            if not evt or evt.get('type') not in ('PRESS','REPEAT'):
                 continue
             button = evt.get('button')
             if button == "KEY_LEFT_PIN":
@@ -633,7 +632,7 @@ class NumericPicker(ValuePickerWidget):
             self.update_display()
 
             evt = self.ctx.get_button_event(timeout=0.5)
-            if not evt or evt.get('type') not in ('PRESS','REPEAT','CLICK','DOUBLE_CLICK'):
+            if not evt or evt.get('type') not in ('PRESS','REPEAT'):
                 continue
             button = evt.get('button')
             if button == "KEY_UP_PIN":
@@ -758,7 +757,7 @@ class ImageBrowser(BaseWidget):
                 # Wait for any button press before returning
                 while True:
                     evt = self.ctx.get_button_event(timeout=0.5)
-                    if evt and evt.get('type') in ('PRESS','CLICK','DOUBLE_CLICK'):
+                    if evt and evt.get('type') == 'PRESS':
                         break
                 if status_was_visible and getattr(self.ctx, 'status_bar', None):
                     self.ctx.status_bar.show()
