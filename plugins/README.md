@@ -877,51 +877,16 @@ Current included plugins use simplified, focused configurations:
 
 ## 📝 Included Plugins
 
-### `battery_status_plugin`
-- **Function**: Monitor system battery with INA219 sensor
-- **HUD**: Shows percentage, icon, and voltage status
-- **Configuration Options**:
-  - `show_percentage`: Display battery percentage (default: true)
-  - `show_icon`: Show battery icon indicator (default: true) 
-  - `enable_monitoring`: Enable battery monitoring (default: true)
-- **Info Display**: Real-time voltage, current, and power readings
+Below are the bundled plugins with quick links to their dedicated documentation pages (each plugin folder contains a `README.md` with full details, events, configuration, and usage examples):
 
-### `temperature_plugin` 
-- **Function**: Monitor CPU temperature with thermal sensors
-- **HUD**: Temperature display in corner overlay
-- **Configuration Options**:
-  - `enable_display`: Show temperature in HUD (default: true)
-  - `show_unit`: Display °C unit with temperature (default: true)
-- **Info Display**: Current CPU temperature and sensor status
-
-### `discord_notifier_plugin`
-- **Function**: Send Discord notifications for completed Nmap scans
-- **Commands**: `DISCORD_MESSAGE`, `DISCORD_EXFIL`
-- **Configuration Options**:
-  - `nmap_notifications`: Send notifications when scans complete (default: true)
-- **Features**: 
-  - Automatic file attachments
-  - Embedded scan results with timestamps
-  - Webhook configuration via `discord_webhook.txt`
-  - Network interface detection
-
-### `ethernet_hook`
-- **Function**: Monitor Ethernet interface (default: `eth0`) and trigger payloads on connect/disconnect events.
-- **HUD**: Shows "network-wired" icon in top bar when IPv4 is present.
-- **Configuration Options**:
-    - `interface`: Interface to monitor (default: `eth0`)
-    - `show_status_icon`: Show link icon (default: true)
-    - `icon_horizontal_pos`: Icon X position (default: 30)
-    - `on_ethernet_connected`: Payloads to run on connect
-    - `on_ethernet_disconnected`: Payloads to run on disconnect
-- **Info Display**: Current interface, IP, status, payload lists, icon status
-- **Events Emitted**:
-    - `ethernet.connected` { interface, ip }
-    - `ethernet.disconnected` { interface, ip }
-- **Menu Actions**:
-    - Set Icon Position
-    - Add Connect Payload
-    - Clear Connect Payloads
+| Plugin | Description | Docs |
+|--------|-------------|------|
+| Battery Status | INA219 based battery monitoring (percentage, icon, thresholds, adaptive polling) | [README](./battery_status_plugin/README.md) |
+| Temperature | CPU temperature overlay with thresholds, colorize, alignment & offset | [README](./temperature_plugin/README.md) |
+| Screenshot | Manual + periodic framebuffer capture with event hooks | [README](./screenshot_plugin/README.md) |
+| Discord Notifier | Event-driven Discord webhook notifications & automation hooks | [README](./discord_notifier_plugin/README.md) |
+| Ethernet Hook | Ethernet link state detection + payload triggers + status icon | [README](./ethernet_hook/README.md) |
+| Example Plugin | Fully documented reference / template implementation | [README](./example_plugin/README.md) |
 
 ### Plugin Menu Navigation
 
